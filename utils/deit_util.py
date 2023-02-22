@@ -63,6 +63,7 @@ class SmoothedValue(object):
 
     @property
     def global_avg(self):
+        breakpoint()
         return self.total / self.count
 
     @property
@@ -118,6 +119,12 @@ class MetricLogger(object):
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
+        '''
+        yield objects in iterable, log everytime it is yielded.
+        :param iterable: iterable to iter through and yield.
+        :param print_freq: print log message for every print_freq iters.
+        :param header: header of log message
+        '''
         i = 0
         if not header:
             header = ''

@@ -1,3 +1,4 @@
+import os
 from .utils import Split
 from . import config as config_lib
 from . import dataset_spec as dataset_spec_lib
@@ -16,15 +17,15 @@ def get_metadataset(args, datasets=["ilsvrc_2012"], split=Split["TRAIN"]):
     # Get the data specifications
     use_dag_ontology_list = [False]*len(datasets)
     use_bilevel_ontology_list = [False]*len(datasets)
-    if episod_config.num_ways:
-        if len(datasets) > 1:
-            raise ValueError('For fixed episodes, not tested yet on > 1 dataset')
-    else:
-        # Enable ontology aware sampling for Omniglot and ImageNet.
-        if 'omniglot' in datasets:
-            use_bilevel_ontology_list[datasets.index('omniglot')] = True
-        if 'ilsvrc_2012' in datasets:
-            use_dag_ontology_list[datasets.index('ilsvrc_2012')] = True
+#     if episod_config.num_ways:
+#         if len(datasets) > 1:
+#             raise ValueError('For fixed episodes, not tested yet on > 1 dataset')
+#     else:
+#         # Enable ontology aware sampling for Omniglot and ImageNet.
+#         if 'omniglot' in datasets:
+#             use_bilevel_ontology_list[datasets.index('omniglot')] = True
+#         if 'ilsvrc_2012' in datasets:
+#             use_dag_ontology_list[datasets.index('ilsvrc_2012')] = True
 
     episod_config.use_bilevel_ontology_list = use_bilevel_ontology_list
     episod_config.use_dag_ontology_list = use_dag_ontology_list

@@ -21,6 +21,7 @@ import utils.deit_util as utils
 from datasets import get_loaders
 from utils.args import get_args_parser
 from models import get_model
+from models import meta
 
 
 def main(args):
@@ -49,7 +50,6 @@ def main(args):
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
     data_loader_train, data_loader_val = get_loaders(args, num_tasks, global_rank)
-
     ##############################################
     # Mixup regularization (by default OFF)
     mixup_fn = None
@@ -62,9 +62,17 @@ def main(args):
 
     ##############################################
     # Model
-    print(f"Creating model: ProtoNet {args.arch}")
+    print(f"Creating model: {args.arch}")
 
     model = get_model(args)
+    if 'maml' in args.arch:
+        maml = {
+            'step_size': args.step_size,
+            'first_order': args.first_order,
+            'num_steps': args.num_steps,
+        }
+    else:
+        maml = None
     model.to(device)
 
     model_ema = None # (by default OFF)
@@ -135,7 +143,7 @@ def main(args):
 
     ##############################################
     # Test
-    test_stats = evaluate(data_loader_val, model, criterion, device, args.seed+10000)
+    test_stats = evaluate(data_loader_val, model, criterion, device, args.seed+10000, maml=maml)
     print(f"Accuracy of the network on dataset_val: {test_stats['acc1']:.1f}%")
     if args.output_dir and utils.is_main_process():
         test_stats['epoch'] = -1
@@ -161,12 +169,13 @@ def main(args):
         train_stats = train_one_epoch(
             data_loader_train, model, criterion, optimizer, epoch, device,
             loss_scaler, args.fp16, args.clip_grad, model_ema, mixup_fn, writer,
-            set_training_mode=False  # TODO: may need eval mode for finetuning
+            set_training_mode=False,
+            maml=maml
         )
 
         lr_scheduler.step(epoch)
 
-        test_stats = evaluate(data_loader_val, model, criterion, device, args.seed+10000)
+        test_stats = evaluate(data_loader_val, model, criterion, device, args.seed+10000, maml=maml)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      **{f'test_{k}': v for k, v in test_stats.items()},

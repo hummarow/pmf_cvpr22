@@ -1,9 +1,15 @@
 import math
 import sys
+import os
+import time
+from tqdm import tqdm
+import logging
+
 import warnings
 from typing import Iterable, Optional
 
 import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 
 from timm.data import Mixup
@@ -11,6 +17,9 @@ from timm.utils import accuracy, ModelEma
 
 import utils.deit_util as utils
 from utils import AverageMeter, to_device
+
+from torchmeta.utils.gradient_based import gradient_update_parameters
+from collections import OrderedDict
 
 
 def train_one_epoch(data_loader: Iterable,
@@ -25,7 +34,9 @@ def train_one_epoch(data_loader: Iterable,
                     model_ema: Optional[ModelEma] = None,
                     mixup_fn: Optional[Mixup] = None,
                     writer: Optional[SummaryWriter] = None,
-                    set_training_mode=True):
+                    set_training_mode=True,
+                    maml = None,
+                    ):
 
     global_step = epoch * len(data_loader)
 
@@ -38,36 +49,66 @@ def train_one_epoch(data_loader: Iterable,
 
     model.train(set_training_mode)
 
-    for batch in metric_logger.log_every(data_loader, print_freq, header):
+    for batch in metric_logger.log_every(data_loader, print_freq, header): # data_loader.next() -> sptTensor, sptLabel, x, y
         batch = to_device(batch, device)
         SupportTensor, SupportLabel, x, y = batch
-
+#         import pdb
+#         pdb.set_trace()
         if mixup_fn is not None:
             x, y = mixup_fn(x, y)
 
         # forward
-        with torch.cuda.amp.autocast(fp16):
-            output = model(SupportTensor, SupportLabel, x)
+            # maml은 다르게
+        if maml:
+            with torch.cuda.amp.autocast(fp16):
+                loss = 0
+                for task_idx, (train_input, train_target, test_input, test_target) in enumerate(zip(SupportTensor, SupportLabel, x, y)):
+                    train_logit = model(train_input)
+                    inner_loss = F.cross_entropy(train_logit, train_target)
+                    inner_loss.requires_grad = True
 
-        output = output.view(x.shape[0] * x.shape[1], -1)
-        y = y.view(-1)
-        loss = criterion(output, y)
-        loss_value = loss.item()
+                    model.zero_grad()
+                    params = gradient_update_parameters(model,
+                                                        inner_loss,
+                                                        step_size=maml['step_size'],
+                                                        first_order=maml['first_order']
+                                                        )
 
-        if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
-            sys.exit(1)
+                    test_logit = model(test_input, params=params) # output
+                    loss += F.cross_entropy(test_logit, test_target)
 
-        optimizer.zero_grad()
+#                     with torch.no_grad():
+#                         accuracy += get_accuracy(test_logit, test_target)
 
-        if fp16:
-            # this attribute is added by timm on one optimizer (adahessian)
-            is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
-            loss_scaler(loss, optimizer, clip_grad=max_norm,
-                        parameters=model.parameters(), create_graph=is_second_order)
+                loss.div_(maml['batch_size'])
+#                 accuracy.div_(args.batch_size)
+                loss_value = loss.item() # TODO:May cause error
+                loss.requires_grad = True
+                loss.backward()
+                optimizer.step()
         else:
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast(fp16):
+                output = model(SupportTensor, SupportLabel, x)
+
+            output = output.view(x.shape[0] * x.shape[1], -1)
+            y = y.view(-1)
+            loss = criterion(output, y)
+            loss_value = loss.item()
+
+            if not math.isfinite(loss_value):
+                print("Loss is {}, stopping training".format(loss_value))
+                sys.exit(1)
+
+            optimizer.zero_grad()
+
+            if fp16:
+                # this attribute is added by timm on one optimizer (adahessian)
+                is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
+                loss_scaler(loss, optimizer, clip_grad=max_norm,
+                            parameters=model.parameters(), create_graph=is_second_order)
+            else:
+                loss.backward()
+                optimizer.step()
 
         torch.cuda.synchronize()
         if model_ema is not None:
@@ -92,7 +133,7 @@ def train_one_epoch(data_loader: Iterable,
     return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
 
 
-def evaluate(data_loaders, model, criterion, device, seed=None, ep=None):
+def evaluate(data_loaders, model, criterion, device, seed=None, ep=None, maml=None):
     if isinstance(data_loaders, dict):
         test_stats_lst = {}
         test_stats_glb = {}
@@ -100,7 +141,7 @@ def evaluate(data_loaders, model, criterion, device, seed=None, ep=None):
         for j, (source, data_loader) in enumerate(data_loaders.items()):
             print(f'* Evaluating {source}:')
             seed_j = seed + j if seed else None
-            test_stats = _evaluate(data_loader, model, criterion, device, seed_j)
+            test_stats = _evaluate(data_loader, model, criterion, device, seed_j, maml=maml)
             test_stats_lst[source] = test_stats
             test_stats_glb[source] = test_stats['acc1']
 
@@ -110,14 +151,14 @@ def evaluate(data_loaders, model, criterion, device, seed=None, ep=None):
 
         return test_stats_glb
     elif isinstance(data_loaders, torch.utils.data.DataLoader): # when args.eval = True
-        return _evaluate(data_loaders, model, criterion, device, seed, ep)
+        return _evaluate(data_loaders, model, criterion, device, seed, ep, maml=maml)
     else:
         warnings.warn(f'The structure of {data_loaders} is not recognizable.')
-        return _evaluate(data_loaders, model, criterion, device, seed)
+        return _evaluate(data_loaders, model, criterion, device, seed, maml=maml)
 
 
 @torch.no_grad()
-def _evaluate(data_loader, model, criterion, device, seed=None, ep=None):
+def _evaluate(data_loader, model, criterion, device, seed=None, ep=None, maml=None):
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('n_ways', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
     metric_logger.add_meter('n_imgs', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
@@ -138,21 +179,51 @@ def _evaluate(data_loader, model, criterion, device, seed=None, ep=None):
 
         batch = to_device(batch, device)
         SupportTensor, SupportLabel, x, y = batch
-
         # compute output
-        with torch.cuda.amp.autocast():
-            output = model(SupportTensor, SupportLabel, x)
+        if maml:
+            with torch.cuda.amp.autocast():
+                # Finetune
+                SupportTensor, SupportLabel, x, y = SupportTensor.squeeze(), SupportLabel.squeeze(), x.squeeze(), y.squeeze()
+                train_logit = model(SupportTensor)
+                inner_loss = F.cross_entropy(train_logit, SupportLabel)
 
-        output = output.view(x.shape[0] * x.shape[1], -1)
-        y = y.view(-1)
-        loss = criterion(output, y)
+                model.zero_grad()
+                inner_loss.requires_grad = True
+                params = OrderedDict(model.meta_named_parameters())
+#                 import pdb
+#                 pdb.set_trace()
+#                 grads = torch.autograd.grad(inner_loss,
+#                                             params.values(),
+#                                             create_graph=False,
+#                                             )
+#                 updated_params = OrderedDict()
+#                 for (name, param), grad in zip(params.items(), grads):
+#                     updated_params[name] = param - maml['step_size'] * grad
+                params = gradient_update_parameters(model,
+                                                    inner_loss,
+                                                    step_size=maml['step_size'],
+                                                    first_order=maml['first_order'],
+                                                    )
+                # Get output
+                output = model(x, params=params)
+                loss = F.cross_entropy(output, y)
+
+#                 with torch.no_grad():
+#                     accuracy += get_accuracy(test_logit, test_target)
+        else:
+            with torch.cuda.amp.autocast():
+                output = model(SupportTensor, SupportLabel, x)
+
+                output = output.view(x.shape[0] * x.shape[1], -1)
+                y = y.view(-1)
+                loss = criterion(output, y)
         acc1, acc5 = accuracy(output, y, topk=(1, 5))
 
         batch_size = x.shape[0]
         metric_logger.update(loss=loss.item())
         metric_logger.meters['acc1'].update(acc1.item(), n=batch_size)
         metric_logger.meters['acc5'].update(acc5.item(), n=batch_size)
-        metric_logger.update(n_ways=SupportLabel.max()+1)
+        metric_logger.update(n_ways=SupportLabel.max()+1) # TODO:
         metric_logger.update(n_imgs=SupportTensor.shape[1] + x.shape[1])
 
     # gather the stats from all processes

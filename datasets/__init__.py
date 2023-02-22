@@ -24,7 +24,16 @@ def get_sets(args):
             trainSet = valSet = None
             testSet = FullMetaDatasetH5(args, Split.TEST)
         else:
-            trainSet = FullMetaDatasetH5(args, Split.TRAIN)
+            # Not checked when multiprocess.
+            if args.choose_train:
+                sources = args.base_sources
+                trainSet = {}
+                for source in sources:
+                    args.base_sources = [source]
+                    trainSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
+                args.base_sources = sources
+            else:
+                trainSet = FullMetaDatasetH5(args, Split.TRAIN)
             valSet = {}
             for source in args.val_sources:
                 valSet[source] = MetaValDataset(os.path.join(args.data_path, source,
@@ -67,12 +76,17 @@ def get_sets(args):
     return trainSet, valSet, testSet
 
 
+def task_collate(samples):
+    support_images, support_labels, query_images, query_labels = zip(*samples)
+    return (support_images, support_labels, query_images, query_labels)
+
+
 def get_loaders(args, num_tasks, global_rank):
     # datasets
     if args.eval:
         _, _, dataset_vals = get_sets(args)
     else:
-        dataset_train, dataset_vals, _ = get_sets(args)
+        dataset_trains, dataset_vals, _ = get_sets(args)
 
     # Worker init function
     if 'meta_dataset' in args.dataset: # meta_dataset & meta_dataset_h5
@@ -89,6 +103,8 @@ def get_loaders(args, num_tasks, global_rank):
     # NOTE: meta-dataset has separate val-set per domain
     if not isinstance(dataset_vals, dict):
         dataset_vals = {'single': dataset_vals}
+
+
 
     data_loader_val = {}
 
@@ -126,32 +142,51 @@ def get_loaders(args, num_tasks, global_rank):
     if args.eval:
         return None, data_loader_val
 
+
     # Train loader
-    if args.distributed:
-        if args.repeated_aug: # (by default OFF)
-            sampler_train = RASampler(
-                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+    if args.choose_train:
+        data_loader_train = {}
+        for j, (source, dataset_train) in enumerate(dataset_trains.items()):
+            sampler_train = torch.utils.data.SequentialSampler(dataset_trains)
+            generator = torch.Generator()
+            generator.manual_seed(args.seed + 10000 + j)
+
+            data_loader = torch.utils.data.DataLoader(
+                dataset_train, sampler=sampler_train,
+                batch_size=1,
+                num_workers=3, # more workers can take too much CPU
+                pin_memory=args.pin_mem,
+                drop_last=False,
+                worker_init_fn=worker_init_fn,
+                generator=generator
             )
-        else:
-            sampler_train = torch.utils.data.DistributedSampler(
-                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-            )
+            data_loader_train[source] = data_loader
     else:
-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
+        if args.distributed:
+            if args.repeated_aug: # (by default OFF)
+                sampler_train = RASampler(
+                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                )
+            else:
+                sampler_train = torch.utils.data.DistributedSampler(
+                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                )
+        else:
+            sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
-    generator = torch.Generator()
-    generator.manual_seed(args.seed)
+        generator = torch.Generator()
+        generator.manual_seed(args.seed)
 
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=True,
-        worker_init_fn=worker_init_fn,
-        generator=generator
-    )
-
+        data_loader_train = torch.utils.data.DataLoader(
+            dataset_train, sampler=sampler_train,
+            batch_size=1,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=True,
+            worker_init_fn=worker_init_fn,
+            generator=generator,
+            collate_fn=task_collate,
+        )
     return data_loader_train, data_loader_val
 
 

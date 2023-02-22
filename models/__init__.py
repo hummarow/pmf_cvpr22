@@ -4,6 +4,11 @@ import torch
 #from timm.models import create_model
 from .protonet import ProtoNet
 from .deploy import ProtoNet_Finetune, ProtoNet_Auto_Finetune, ProtoNet_AdaTok, ProtoNet_AdaTok_EntMin
+from torchmeta.datasets.helpers import omniglot
+from torchmeta.utils.data import BatchMetaDataLoader
+from torchmeta.utils.gradient_based import gradient_update_parameters
+
+from models.maml import MetaConv4
 
 
 def get_backbone(args):
@@ -173,6 +178,14 @@ def get_backbone(args):
 
 
 def get_model(args):
+    if 'maml' in args.arch:
+        model = maml.MetaConv4(in_channels=3,
+                               out_features=int(15),
+#                                out_features=int(args.n_ways),
+                               hidden_size=64,
+                               )
+        return model
+
     backbone = get_backbone(args)
 
     if args.deploy == 'vanilla':

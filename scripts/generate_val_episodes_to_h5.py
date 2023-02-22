@@ -8,6 +8,8 @@ import h5py as h5
 from tqdm import tqdm
 from pathlib import Path
 
+import sys
+sys.path.append(os.path.abspath('./'))
 import utils.deit_util as utils
 from utils.args import get_args_parser
 
@@ -22,6 +24,7 @@ def main(args):
     args.dataset = 'meta_dataset'
     args.image_size = 128
     args.max_ways_upper_bound = 50
+    args.max_ways_upper_bound = 5
     args.max_support_size_contrib_per_class = 100
     args.max_num_query = 10
     args.num_workers = 10

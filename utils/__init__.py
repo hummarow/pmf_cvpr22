@@ -52,14 +52,14 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
-def to_device(input, device):
-    if torch.is_tensor(input):
-        return input.to(device=device, non_blocking=True)
-    elif isinstance(input, str):
-        return input
-    elif isinstance(input, collections.Mapping):
-        return {k: to_device(sample, device=device) for k, sample in input.items()}
-    elif isinstance(input, collections.Sequence):
-        return [to_device(sample, device=device) for sample in input]
+def to_device(data, device):
+    if torch.is_tensor(data):
+        return data.to(device=device, non_blocking=True)
+    elif isinstance(data, str):
+        return data
+    elif isinstance(data, collections.Mapping):
+        return {k: to_device(sample, device=device) for k, sample in data.items()}
+    elif isinstance(data, collections.Sequence):
+        return [to_device(sample, device=device) for sample in data]
     else:
-        raise TypeError("Input must contain tensor, dict or list, found {type(input)}")
+        raise TypeError(f"data must contain tensor, dict or list, found {type(data)}")

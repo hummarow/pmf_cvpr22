@@ -21,7 +21,7 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
         # Data & episodic configurations
         data_config = config_lib.DataConfig(args)
         episod_config = config_lib.EpisodeDescriptionConfig(args)
-
+        self.split = split
         if split == Split.TRAIN:
             datasets = args.base_sources
             episod_config.num_episodes = args.nEpisode
@@ -34,15 +34,15 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
 
         use_dag_ontology_list = [False]*len(datasets)
         use_bilevel_ontology_list = [False]*len(datasets)
-        if episod_config.num_ways:
-            if len(datasets) > 1:
-                raise ValueError('For fixed episodes, not tested yet on > 1 dataset')
-        else:
-            # Enable ontology aware sampling for Omniglot and ImageNet.
-            if 'omniglot' in datasets:
-                use_bilevel_ontology_list[datasets.index('omniglot')] = True
-            if 'ilsvrc_2012' in datasets:
-                use_dag_ontology_list[datasets.index('ilsvrc_2012')] = True
+#         if episod_config.num_ways:
+#             if len(datasets) > 1:
+#                 raise ValueError('For fixed episodes, not tested yet on > 1 dataset')
+#         else:
+#             # Enable ontology aware sampling for Omniglot and ImageNet.
+#             if 'omniglot' in datasets:
+#                 use_bilevel_ontology_list[datasets.index('omniglot')] = True
+#             if 'ilsvrc_2012' in datasets:
+#                 use_dag_ontology_list[datasets.index('ilsvrc_2012')] = True
 
         episod_config.use_bilevel_ontology_list = use_bilevel_ontology_list
         episod_config.use_dag_ontology_list = use_dag_ontology_list
@@ -130,7 +130,6 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
             (class_id + sampler.class_set[0], num_support, num_query)
             for class_id, num_support, num_query in episode_description)
         episode_classes = list({class_ for class_, _, _ in episode_description})
-
         for class_id, nb_support, nb_query in episode_description:
             assert nb_support + nb_query <= len(self.class_images[source][class_id]), \
                 f'Failed fetching {nb_support + nb_query} images from {source} at class {class_id}.'

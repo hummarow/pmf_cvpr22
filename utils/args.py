@@ -99,6 +99,12 @@ def get_args_parser():
     parser.add_argument("--checkpoint_key", default="teacher", type=str, help='Key to use in the checkpoint (example: "teacher")')
     parser.add_argument('--unused_params', action='store_true')
     parser.add_argument('--no-pretrain', action='store_true')
+    
+    # MAML params
+    parser.add_argument('--step_size', default=0.01, type=float, help='Inner update step_size.')
+    parser.add_argument('--num_steps', default=5, type=int, help='Number of inner gradient steps')
+    parser.add_argument('--first_order', action='store_true', help='To use first_order or not (second_order).')
+
 
     # Deployment params
     parser.add_argument("--deploy", type=str, default="vanilla",
@@ -226,4 +232,123 @@ def get_args_parser():
     parser.add_argument('--world_size', default=1, type=int,
                         help='number of distributed processes')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
+    parser.add_argument("--epoch", type=int, help="epoch number", default=6)
+    parser.add_argument("--n_way", type=int, help="n way", default=5)
+    parser.add_argument("--k_spt", type=int, help="k shot for support set", default=1)
+    parser.add_argument("--k_qry", type=int, help="k shot for query set", default=15)
+    parser.add_argument("--imgsz", type=int, help="imgsz", default=84)
+    parser.add_argument("--imgc", type=int, help="imgc", default=3)
+    parser.add_argument(
+        "--task_num",
+        type=int,
+        help="meta batch size, namely task num",
+        default=4,
+    )
+    parser.add_argument(
+        "--meta_lr",
+        type=float,
+        help="meta-level outer learning rate",
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--update_lr",
+        type=float,
+        help="task-level inner update learning rate",
+        default=0.01,
+    )
+    parser.add_argument(
+        "--update_step",
+        type=int,
+        help="task-level inner update steps",
+        default=5,
+    )
+    parser.add_argument(
+        "--episode",
+        type=int,
+        help="Number of training episodes per epoch",
+        default=10000,
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        help="number of validations",
+        default=5,
+    )
+    parser.add_argument(
+        "--update_step_test",
+        type=int,
+        help="update steps for finetunning",
+        default=10,
+    )
+    parser.add_argument("--logdir", type=str, help="log directory for tensorboard", default="")
+    # Augmentation
+    parser.add_argument(
+        "--traditional_augmentation",
+        "--trad_aug",
+        action="store_true",
+        help="train with augment data in traditional way",
+        default=False,
+    )
+    parser.add_argument(
+        "--aug",
+        action="store_true",
+        help="add augmentation and measure weight distance between original data and augmented data",
+        default=False,
+    )
+    parser.add_argument(
+        "--qry_aug",
+        action="store_true",
+        help="use augmented query set when meta-updating parameters",
+        default=False,
+    )
+    parser.add_argument(
+        "--flip",
+        action="store_true",
+        help="add random horizontal flip augmentation",
+        default=False,
+    )
+    # Regularizer
+    parser.add_argument("--reg", type=float, help="coefficient for regularizer", default=0.01)
+    parser.add_argument(
+        "--rm_augloss",
+        action="store_true",
+        default=False,
+    )
+    # proximal regularizer for imaml
+    parser.add_argument(
+        "--prox_lam",
+        type=float,
+        help="Lambda for imaml proximal regularizer",
+        default=0,
+    )
+    parser.add_argument(
+        "--prox_task",
+        type=int,
+        help="Apply proximal regularizer at task 0 (original), task 1 (augmented), or 2 (both)",
+        default=-1,
+    )
+    # Chaser loss for bmaml
+    parser.add_argument(
+        "--chaser_lam",
+        type=float,
+        help="Lambda for bmaml chaser loss",
+        default=0,
+    )
+    parser.add_argument(
+        "--chaser_task",
+        type=int,
+        help="Apply proximal regularizer at task 0 (original), task 1 (augmented), or 2 (both)",
+        default=-1,
+    )
+    parser.add_argument(
+        "--chaser_lr",
+        type=float,
+        default=1e-3,
+    )
+    parser.add_argument(
+        "--bmaml",
+        action="store_true",
+        help="Bmaml loss only",
+        default=False,
+    )
     return parser

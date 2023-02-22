@@ -411,6 +411,8 @@ class EpisodeDescriptionSampler(object):
                 min_ways=self.min_ways,
                 max_ways=self.max_ways_upper_bound)
 
+            num_ways = self.min_ways
+
             # e.g. if these are [3, 1] then the 4'th and the 2'nd of the subclasses
             # that belong to the chosen superclass will be used. If the class id's
             # that belong to this superclass are [23, 24, 25, 26] then the returned
@@ -431,6 +433,7 @@ class EpisodeDescriptionSampler(object):
                     self.num_filtered_classes,
                     min_ways=self.min_ways,
                     max_ways=self.max_ways_upper_bound)
+                num_ways = self.min_ways
             # Filtered class IDs relative to the selected split
             ids_rel = [  # noqa: E111
                 class_id - self.class_set[0] for class_id in self._filtered_class_set
