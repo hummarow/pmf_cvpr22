@@ -13,6 +13,8 @@ def get_args_parser():
     parser.set_defaults(fp16=True)
     parser.add_argument('--output_dir', default='outputs/tmp',
                         help='path where to save, empty for no saving')
+    parser.add_argument('--plot_dir', default='images/tmp',
+                        help='path where to save pictures')
     parser.add_argument('--device', default='cuda',
                         help='cuda:gpu_id for single GPU training')
     parser.add_argument('--seed', default=0, type=int)

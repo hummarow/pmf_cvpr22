@@ -25,15 +25,15 @@ def get_sets(args):
             testSet = FullMetaDatasetH5(args, Split.TEST)
         else:
             # Not checked when multiprocess.
+            trainSet = {}
             if args.choose_train:
                 sources = args.base_sources
-                trainSet = {}
                 for source in sources:
                     args.base_sources = [source]
                     trainSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
                 args.base_sources = sources
             else:
-                trainSet = FullMetaDatasetH5(args, Split.TRAIN)
+                trainSet['combined'] = FullMetaDatasetH5(args, Split.TRAIN)
             valSet = {}
             for source in args.val_sources:
                 valSet[source] = MetaValDataset(os.path.join(args.data_path, source,
@@ -105,7 +105,6 @@ def get_loaders(args, num_tasks, global_rank):
         dataset_vals = {'single': dataset_vals}
 
 
-
     data_loader_val = {}
 
     for j, (source, dataset_val) in enumerate(dataset_vals.items()):
@@ -144,42 +143,29 @@ def get_loaders(args, num_tasks, global_rank):
 
 
     # Train loader
-    if args.choose_train:
+    for j, (source, dataset_train) in enumerate(dataset_trains.items()):
         data_loader_train = {}
-        for j, (source, dataset_train) in enumerate(dataset_trains.items()):
-            sampler_train = torch.utils.data.SequentialSampler(dataset_trains)
-            generator = torch.Generator()
-            generator.manual_seed(args.seed + 10000 + j)
-
-            data_loader = torch.utils.data.DataLoader(
-                dataset_train, sampler=sampler_train,
-                batch_size=1,
-                num_workers=3, # more workers can take too much CPU
-                pin_memory=args.pin_mem,
-                drop_last=False,
-                worker_init_fn=worker_init_fn,
-                generator=generator
-            )
-            data_loader_train[source] = data_loader
-    else:
-        if args.distributed:
-            if args.repeated_aug: # (by default OFF)
-                sampler_train = RASampler(
-                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-                )
-            else:
-                sampler_train = torch.utils.data.DistributedSampler(
-                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-                )
+        if args.choose_train:
+                sampler_train = torch.utils.data.SequentialSampler(dataset_trains)
         else:
-            sampler_train = torch.utils.data.RandomSampler(dataset_train)
+            if args.distributed:
+                if args.repeated_aug: # (by default OFF)
+                    sampler_train = RASampler(
+                        dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                    )
+                else:
+                    sampler_train = torch.utils.data.DistributedSampler(
+                        dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                    )
+            else:
+                sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
         generator = torch.Generator()
         generator.manual_seed(args.seed)
 
-        data_loader_train = torch.utils.data.DataLoader(
+        data_loader_train[source] = torch.utils.data.DataLoader(
             dataset_train, sampler=sampler_train,
-            batch_size=1,
+            batch_size=args.batch_size,
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=True,

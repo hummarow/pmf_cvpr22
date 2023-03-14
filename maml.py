@@ -3,10 +3,16 @@ import datetime
 import random
 import numpy as np
 import time
+import tqdm
 import torch
 import torch.backends.cudnn as cudnn
 import json
+import gc
+import mem
+import matplotlib.pyplot as plt
 
+from datetime import timedelta
+from collections import defaultdict
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from sklearn.manifold import TSNE
@@ -17,7 +23,7 @@ from timm.scheduler import create_scheduler
 from timm.optim import create_optimizer
 from timm.utils import NativeScaler, get_state_dict, ModelEma
 
-from engine import train_one_epoch, evaluate
+from engine import train_one_epoch
 import utils.deit_util as utils
 from utils import AverageMeter, to_device
 from datasets import get_loaders, get_sets
@@ -28,7 +34,7 @@ from models.meta import Meta
 
 def main(args):
 #     utils.init_distributed_mode(args)
-    args.distributed = False
+    args.distributed = True
 
     print(args)
     device = torch.device(args.device)
@@ -48,9 +54,14 @@ def main(args):
         with (output_dir / "log.txt").open("a") as f:
             f.write(" ".join(sys.argv) + "\n")
 
+
+    plot_dir = Path(args.plot_dir)
+    if utils.is_main_process():
+        plot_dir.mkdir(parents=True, exist_ok=True)
+
     ##############################################
     # Data loaders
-    args.choose_train = True
+    args.choose_train = False
     num_tasks = utils.get_world_size()
     global_rank = utils.get_rank()
     data_loader_train, data_loader_val = get_loaders(args, num_tasks, global_rank)
@@ -74,10 +85,12 @@ def main(args):
     pool_pad = 0
 
     model_config_no_classifier = [
-        ("conv2d", [32, 3, conv_kernel, conv_kernel, conv_stride, conv_pad]),  # [ch_out, ch_in, kernel, kernel, stride, pad]
+        # [ch_out, ch_in, kernel, kernel, stride, pad]
+        ("conv2d", [32, 3, conv_kernel, conv_kernel, conv_stride, conv_pad]),
         ("relu", [True]),  # [inplace]
         ("bn", [32]),  # [ch_out]
-        ("max_pool2d", [pool_kernel, pool_stride, pool_pad]),  # [kernel, stride, padding]
+        # [kernel, stride, padding]
+        ("max_pool2d", [pool_kernel, pool_stride, pool_pad]),
     ]
     model_config_no_classifier.extend([
         ("conv2d", [32, 32, conv_kernel, conv_kernel, conv_stride, conv_pad]),
@@ -89,12 +102,13 @@ def main(args):
         ("flatten", []),
     ])
     ##############################################
-#     model = Meta(args, model_config)
     
     metric_logger = utils.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
     metric_logger.add_meter('n_ways', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
     metric_logger.add_meter('n_imgs', utils.SmoothedValue(window_size=1, fmt='{value:d}'))
+
+    # Calculate linear layer shape
     if args.eval:
         _, _, dset = get_sets(args)
     else:
@@ -104,70 +118,189 @@ def main(args):
         linear_shape -= 2
         linear_shape //= 2
     linear_shape **= 2
-
     linear_config = [
         ("linear", [args.n_way, 32 * linear_shape]),
     ]
-    model = Meta(args, model_config_no_classifier)
-    # Append linear layer to the model
-    model.net.append(linear_config)
-    model.to(device)
-
-    for i, (source, data_loader) in enumerate(data_loader_val.items()):
-        pass
-        # Get input shape to set linear layer
-#         linear_shape = dset[source][0][0].shape[2]
-#         for _ in range(4):
-#             linear_shape -= 2
-#             linear_shape //= 2
-#         linear_shape **= 2
 # 
-#         linear_config = [
-#             ("linear", [args.n_way, 32 * linear_shape]),
-#         ]
-#         # Append linear layer to the model
-#         model.net.append(linear_config)
-#         model.to(device)
-
-        # for ii, batch in enumerate(metric_logger.log_every(data_loader, 10)):
-#         for ii, batch in enumerate(data_loader):
-#             batch = to_device(batch, device)
-#             spt_xs, spt_ys, qry_xs, qry_ys = batch
-#             for task_idx, (spt_x, spt_y, qry_x, qry_y) in enumerate(zip(spt_xs, spt_ys, qry_xs, qry_ys)):
-#                 acc = model.finetunning(spt_x, spt_y, qry_x, qry_y)
-#         model.net.pop()
-    if args.eval:
-        return
-
-    
-    params = []
-    start_time = time.time()
+#     model = Meta(args, model_config_no_classifier)
+#     # Append linear layer to the model
+#     model.net.append(linear_config)
+#     model.to(device)
+# 
+#     del model
+    params_all = []
+    num_all_parameters = 0
 #     max_accuracy = acc
     for i, (train_source, train_loader) in enumerate(data_loader_train.items()):
+#         model_config = [
+#             ("conv2d", [32, 3, 3, 3, 1, 0]),  # [ch_out, ch_in, kernel, kernel, stride, pad]
+#             ("relu", [True]),  # [inplace]
+#             ("bn", [32]),  # [ch_out]
+#             ("max_pool2d", [2, 2, 0]),  # [kernel, stride, padding]
+#             ("conv2d", [32, 32, 3, 3, 1, 0]),
+#             ("relu", [True]),
+#             ("bn", [32]),
+#             ("max_pool2d", [2, 2, 0]),
+#             ("conv2d", [32, 32, 3, 3, 1, 0]),
+#             ("relu", [True]),
+#             ("bn", [32]),
+#             ("max_pool2d", [2, 2, 0]),
+#             ("conv2d", [32, 32, 3, 3, 1, 0]),
+#             # ("conv2d", [32, 32, 3, 3, 1, 1]),
+#             ("relu", [True]),
+#             ("bn", [32]),
+#             ("max_pool2d", [2, 1, 0]),
+#             # ("max_pool2d", [2, 2, 0]),
+#             ("flatten", []),
+#             # ("linear", [args.n_way, 32 * 5 * 5]),
+#             ("linear", [args.n_way, 3872]),
+#         ]
+#         model = Meta(args, model_config)
         model = Meta(args, model_config_no_classifier)
         # Append linear layer to the model
         model.net.append(linear_config)
         model.to(device)
         for epoch in range(args.start_epoch, args.epochs):
             header = 'Epoch: [{}]'.format(epoch)
+            print(header)
+            start_time = time.monotonic()
             print_freq = 10
             # for batch in metric_logger.log_every(data_loader_train, print_freq, header):
-            for batch in train_loader:
-                batch = to_device(batch, device)
-                spt_xs, spt_ys, qry_xs, qry_ys = batch
-                acc = model(spt_xs, spt_ys, qry_xs, qry_ys)
-            
-            for j, (source, val_loader) in enumerate(data_loader_val.items()):
-                for batch in val_loader:
-                    batch = to_device(batch, device)
-                    spt_xs, spt_ys, qry_xs, qry_ys = batch
-                    for task_idx, (spt_x, spt_y, qry_x, qry_y) in enumerate(zip(spt_xs, spt_ys, qry_xs, qry_ys)):
-                        acc = model.finetunning(spt_x, spt_y, qry_x, qry_y)
-        
-
-        for param in model.net.parameters().cpu():
-            params.append(param.detach().numpy())
-
+            acc = 0
+            for episode, batch in enumerate(train_loader):
+#                 torch.cuda.empty_cache()
+#                 gc.collect()
+#                 mem_usage = mem.get_memory_usage()
+#                 max_pair = max(mem_usage.items(), key=lambda x: x[1])
+#                 var_name = mem.get_variable_name(max_pair[0])
+#                 print(var_name)
+#                 batch = to_device(batch, device)
+#                 spt_xs, spt_ys, qry_xs, qry_ys = batch
+#                 acc_per_episode = model(spt_xs, spt_ys, qry_xs, qry_ys)
+                print("Before")
+                print(torch.cuda.memory_reserved())
+                acc_per_episode = train(batch, model, device)
+                print("After")
+                print(torch.cuda.memory_reserved())
+                breakpoint()
+                acc += acc_per_episode
+                if episode % 20 == 0:
+                    print("Episode: [{}]".format(epoch * len(train_loader) + episode))
+                    print("Train Acc: {:.2f}%".format(acc_per_episode*100))
+                if episode % 500 == 1111:
+                    # Evaluate
+                    val_acc = 0
+                    params = []
+                    tsne_ranges = {}
+                    param_per_epoch = defaultdict(list)
+                    for j, (source, val_loader) in enumerate(data_loader_val.items()):
+                        val_acc_per_loader = 0
+                        start_index = len(params)
+                        for batch in val_loader:
+                            batch = to_device(batch, device)
+                            spt_xs, spt_ys, qry_xs, qry_ys = batch
+                            for task_idx, (spt_x, spt_y, qry_x, qry_y) in enumerate(zip(spt_xs, spt_ys, qry_xs, qry_ys)):
+                                val_acc_per_loader += model.finetunning(spt_x, spt_y, qry_x, qry_y)
+                            # Get finetuned parameters per source
+                            params.extend(model.finetuned_parameter_list)
+                            param_per_epoch[source].extend(model.finetuned_parameter_list)
+                            tsne_ranges[source] = slice(start_index, len(params))
+                        val_acc_per_loader /= (len(val_loader) * len(spt_xs))
+                        print('{} acc: {:.2f}%'.format(source, val_acc_per_loader*100))
+                        val_acc += val_acc_per_loader
+                    val_acc /= len(data_loader_val)
+                    print('Average val acc: {}%'.format(val_acc*100))
+                    # Save finetuned parameters 
+                    if num_all_parameters == 0:
+                        num_all_parameters = len(params)+1
+                    print('Plotting parameters T-SNE')
+                    # Color list
+                    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'blueviolet', 'magenta', 'peru', 'lime']
+                    # Test: without meta-parameter version
+                    tsne = TSNE(n_components=2, random_state=1004)
+                    embedding = tsne.fit_transform(np.array(params))
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        plt.scatter(xs, ys, c=colors[i], label=source)
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_no_meta.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.clf()
+                    del tsne
+                    tsne = TSNE(n_components=3, random_state=1004)
+                    embedding = tsne.fit_transform(np.array(params))
+                    fig = plt.figure()
+                    ax = fig.add_subplot(projection='3d')
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        zs = embedding[tsne_ranges[source], 2]
+                        ax.scatter(xs, ys, zs, c=colors[i], label=source)
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_no_meta_3d.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.clf()
+                    del tsne
+                    # Add meta-parameter to the end
+                    params.append(np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in model.net.parameters()]).flatten())
+                    param_per_epoch['Meta-Parameter'].append(np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in model.net.parameters()]).flatten())
+                    params_all.append(param_per_epoch)
+                    tsne = TSNE(n_components=2, random_state=1004)
+                    embedding = tsne.fit_transform(np.array(params))
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        plt.scatter(xs, ys, c=colors[i], label=source)
+                    plt.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.clf()
+                    del tsne
+                    # Test 3d
+                    tsne = TSNE(n_components=3, random_state=1004)
+                    embedding = tsne.fit_transform(np.array(params))
+                    fig = plt.figure()
+                    ax = fig.add_subplot(projection='3d')
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        zs = embedding[tsne_ranges[source], 2]
+                        ax.scatter(xs, ys, zs, c=colors[i], label=source)
+                    ax.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_3d.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.clf()
+                    del tsne
+#                     # Plot all parameters regardless of epochs
+#                     params = []
+#                     tsne_ranges = {}
+#                     for source in params_all[0].keys():
+#                         begin = len(params)
+#                         for param_per_epoch in params_all:
+#                             params.extend(param_per_epoch[source])
+#                         tsne_ranges[source] = slice(begin, len(params))
+#                     tsne = TSNE(n_components=2, random_state=1004)
+#                     embedding = tsne.fit_transform(np.array(params))
+#                     for i, source in enumerate(tsne_ranges.keys()):
+#                         xs = embedding[tsne_ranges[source], 0]
+#                         ys = embedding[tsne_ranges[source], 1]
+#                         if source == 'Meta-Parameter':
+#                             plt.scatter(xs[:-1], ys[:-1], c='k', label=source)
+#                             plt.scatter(xs[-1], ys[-1], c='dimgray', label=source)
+#                             plt.plot(xs, ys)
+#                         else:
+#                             plt.scatter(xs, ys, c=colors[i], label=source)
+#                     plt.legend()
+#                     plt.show()
+#                     plt.savefig('{}/{}_all.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+#                     plt.clf()
+#                     del tsne
+            end_time = time.monotonic()
+            acc /= (len(train_loader) * len(spt_xs))
+            print("Acc: {:.2f}%,\tElapsed time: {}".format(acc*100, timedelta(end_time-start_time)))
         del model
     # apply t-SNE on the concatenated numpy array
     # params = np.concatenate(params)
@@ -175,6 +308,28 @@ def main(args):
 #     params = np.array(params)
 #     embedding = tsne.fit_transform(params)
 
+def train(batch, model, device):
+    batch = to_device(batch, device)
+    spt_xs, spt_ys, qry_xs, qry_ys = batch
+    acc_per_episode = model(spt_xs, spt_ys, qry_xs, qry_ys)
+    return acc_per_episode
+
+def evaluate(data_loaders, model, criterion, device, seed=None, ep=None, maml=None):
+    print('Test Accuracy')
+    acc = 0
+    for j, (source, loader) in enumerate(data_loaders.items()):
+        acc_per_loader = 0
+        for batch in loader:
+            batch = to_device(batch, device)
+            spt_xs, spt_ys, qry_xs, qry_ys = batch
+            for task_idx, (spt_x, spt_y, qry_x, qry_y) in enumerate(zip(spt_xs, spt_ys, qry_xs, qry_ys)):
+                acc_per_loader += model.finetunning(spt_x, spt_y, qry_x, qry_y)
+        acc_per_loader /= (len(loader) * len(spt_xs))
+        print(' * {} acc: {:.2f}%'.format(source, acc_per_loader*100))
+        acc += acc_per_loader
+    acc /= len(data_loader_val)
+    print('Average test acc: {:.2f}%'.format(acc*100))
+    return acc
 
 if __name__ == '__main__':
     parser = get_args_parser()

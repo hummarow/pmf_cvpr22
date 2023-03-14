@@ -190,15 +190,6 @@ def _evaluate(data_loader, model, criterion, device, seed=None, ep=None, maml=No
                 model.zero_grad()
                 inner_loss.requires_grad = True
                 params = OrderedDict(model.meta_named_parameters())
-#                 import pdb
-#                 pdb.set_trace()
-#                 grads = torch.autograd.grad(inner_loss,
-#                                             params.values(),
-#                                             create_graph=False,
-#                                             )
-#                 updated_params = OrderedDict()
-#                 for (name, param), grad in zip(params.items(), grads):
-#                     updated_params[name] = param - maml['step_size'] * grad
                 params = gradient_update_parameters(model,
                                                     inner_loss,
                                                     step_size=maml['step_size'],
@@ -208,8 +199,6 @@ def _evaluate(data_loader, model, criterion, device, seed=None, ep=None, maml=No
                 output = model(x, params=params)
                 loss = F.cross_entropy(output, y)
 
-#                 with torch.no_grad():
-#                     accuracy += get_accuracy(test_logit, test_target)
         else:
             with torch.cuda.amp.autocast():
                 output = model(SupportTensor, SupportLabel, x)

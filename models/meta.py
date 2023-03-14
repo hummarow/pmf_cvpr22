@@ -34,6 +34,7 @@ class Meta(nn.Module):
         self.aug = args.aug
         self.qry_aug = args.qry_aug
         self.traditional_augmentation = args.traditional_augmentation
+        self.first_order = args.first_order
         # self.need_aug = args.need_aug
         self.need_aug = False
         self.rm_augloss = args.rm_augloss
@@ -48,6 +49,8 @@ class Meta(nn.Module):
 
         self.net = Learner(config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
+
+        self.finetuned_parameter_list = []  # Updated by self.finetunning() method, the finetuned parameters per task are stored in a list
 
     def clip_grad_by_norm_(self, grad, max_norm):
         """
@@ -167,8 +170,8 @@ class Meta(nn.Module):
                 grad = torch.autograd.grad(
                     loss,
                     finetuned_parameter[i],
-                    create_graph=True,
-                    retain_graph=True,
+                    create_graph=(not self.first_order),
+                    retain_graph=(not self.first_order),
                 )
                 finetuned_parameter[i] = list(
                     map(
@@ -310,7 +313,7 @@ class Meta(nn.Module):
         num_corrects = 0
 
         net = deepcopy(self.net)
-
+        self.finetuned_parameter_list = []
         for i in range(task_num):
             # 1. run the i-th task and compute loss for k=0
             logits = net(x_spt[i])
@@ -336,6 +339,8 @@ class Meta(nn.Module):
 
                 logits_q = net(x_qry[i], finetuned_parameter, bn_training=True)
                 loss_q = F.cross_entropy(logits_q, y_qry[i])
+                flat_parameter = np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in finetuned_parameter]).flatten()
+            self.finetuned_parameter_list.append(flat_parameter)
 
             with torch.no_grad():
                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
@@ -347,15 +352,9 @@ class Meta(nn.Module):
         return acc
 
 
-class ResNet(Meta):
-    def __init__(self, args, config):
-        super(ResNet, self).__init__(args, config)
-        self.net = torch.hub.load("pytorch/vision:v0.10.0", "resnet18", pretrained=True)
-
-
-def main():
-    pass
-
-
-if __name__ == "__main__":
-    main()
+# def main():
+#     pass
+# 
+# 
+# if __name__ == "__main__":
+#     main()
