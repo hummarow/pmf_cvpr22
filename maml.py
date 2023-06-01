@@ -8,6 +8,7 @@ import torch
 import torch.backends.cudnn as cudnn
 import json
 import gc
+import umap
 import mem
 import matplotlib.pyplot as plt
 
@@ -177,17 +178,17 @@ def main(args):
 #                 batch = to_device(batch, device)
 #                 spt_xs, spt_ys, qry_xs, qry_ys = batch
 #                 acc_per_episode = model(spt_xs, spt_ys, qry_xs, qry_ys)
-                print("Before")
-                print(torch.cuda.memory_reserved())
+
+#                 print("Before")
+#                 print(torch.cuda.memory_reserved())
                 acc_per_episode = train(batch, model, device)
-                print("After")
-                print(torch.cuda.memory_reserved())
-                breakpoint()
+#                 print("After")
+#                 print(torch.cuda.memory_reserved())
                 acc += acc_per_episode
                 if episode % 20 == 0:
                     print("Episode: [{}]".format(epoch * len(train_loader) + episode))
                     print("Train Acc: {:.2f}%".format(acc_per_episode*100))
-                if episode % 500 == 1111:
+                if episode % 100 == 0:
                     # Evaluate
                     val_acc = 0
                     params = []
@@ -216,36 +217,32 @@ def main(args):
                     print('Plotting parameters T-SNE')
                     # Color list
                     colors = ['b', 'g', 'r', 'c', 'm', 'y', 'blueviolet', 'magenta', 'peru', 'lime']
-                    # Test: without meta-parameter version
-                    tsne = TSNE(n_components=2, random_state=1004)
-                    embedding = tsne.fit_transform(np.array(params))
-                    for i, source in enumerate(tsne_ranges.keys()):
-                        xs = embedding[tsne_ranges[source], 0]
-                        ys = embedding[tsne_ranges[source], 1]
-                        plt.scatter(xs, ys, c=colors[i], label=source)
-                    plt.legend()
-                    plt.show()
-                    plt.savefig('{}/{}_no_meta.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
-                    plt.clf()
-                    del tsne
-                    tsne = TSNE(n_components=3, random_state=1004)
-                    embedding = tsne.fit_transform(np.array(params))
-                    fig = plt.figure()
-                    ax = fig.add_subplot(projection='3d')
-                    for i, source in enumerate(tsne_ranges.keys()):
-                        xs = embedding[tsne_ranges[source], 0]
-                        ys = embedding[tsne_ranges[source], 1]
-                        zs = embedding[tsne_ranges[source], 2]
-                        ax.scatter(xs, ys, zs, c=colors[i], label=source)
-                    plt.legend()
-                    plt.show()
-                    plt.savefig('{}/{}_no_meta_3d.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
-                    plt.clf()
-                    del tsne
                     # Add meta-parameter to the end
                     params.append(np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in model.net.parameters()]).flatten())
                     param_per_epoch['Meta-Parameter'].append(np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in model.net.parameters()]).flatten())
                     params_all.append(param_per_epoch)
+
+                    embedding = umap.UMAP(random_state=1004).fit_transform(np.array(params))
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        plt.scatter(xs, ys, c=colors[i], label=source)
+                    plt.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_umap.png'.format(args.plot_dir, epoch*len(train_loader) + episode), dpi=400)
+                    plt.clf()
+                    embedding = umap.UMAP(random_state=1005).fit_transform(np.array(params))
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        plt.scatter(xs, ys, c=colors[i], label=source)
+                    plt.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_umap_1.png'.format(args.plot_dir, epoch*len(train_loader) + episode), dpi=400)
+                    plt.clf()
+
                     tsne = TSNE(n_components=2, random_state=1004)
                     embedding = tsne.fit_transform(np.array(params))
                     for i, source in enumerate(tsne_ranges.keys()):
@@ -255,7 +252,7 @@ def main(args):
                     plt.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
                     plt.legend()
                     plt.show()
-                    plt.savefig('{}/{}.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.savefig('{}/{}.png'.format(args.plot_dir, epoch*len(train_loader) + episode), dpi=400)
                     plt.clf()
                     del tsne
                     # Test 3d
@@ -271,33 +268,23 @@ def main(args):
                     ax.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
                     plt.legend()
                     plt.show()
-                    plt.savefig('{}/{}_3d.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
+                    plt.savefig('{}/{}_3d.png'.format(args.plot_dir, epoch*len(train_loader) + episode), dpi=400)
                     plt.clf()
                     del tsne
-#                     # Plot all parameters regardless of epochs
-#                     params = []
-#                     tsne_ranges = {}
-#                     for source in params_all[0].keys():
-#                         begin = len(params)
-#                         for param_per_epoch in params_all:
-#                             params.extend(param_per_epoch[source])
-#                         tsne_ranges[source] = slice(begin, len(params))
-#                     tsne = TSNE(n_components=2, random_state=1004)
-#                     embedding = tsne.fit_transform(np.array(params))
-#                     for i, source in enumerate(tsne_ranges.keys()):
-#                         xs = embedding[tsne_ranges[source], 0]
-#                         ys = embedding[tsne_ranges[source], 1]
-#                         if source == 'Meta-Parameter':
-#                             plt.scatter(xs[:-1], ys[:-1], c='k', label=source)
-#                             plt.scatter(xs[-1], ys[-1], c='dimgray', label=source)
-#                             plt.plot(xs, ys)
-#                         else:
-#                             plt.scatter(xs, ys, c=colors[i], label=source)
-#                     plt.legend()
-#                     plt.show()
-#                     plt.savefig('{}/{}_all.png'.format(args.plot_dir, epoch*len(train_loader) + episode))
-#                     plt.clf()
-#                     del tsne
+                    embedding = umap.UMAP(n_components=3, random_state=1004).fit_transform(np.array(params))
+                    fig = plt.figure()
+                    ax = fig.add_subplot(projection='3d')
+                    for i, source in enumerate(tsne_ranges.keys()):
+                        xs = embedding[tsne_ranges[source], 0]
+                        ys = embedding[tsne_ranges[source], 1]
+                        zs = embedding[tsne_ranges[source], 2]
+                        ax.scatter(xs, ys, zs, c=colors[i], label=source)
+                    ax.scatter(embedding[-1, 0], embedding[-1, 1], c='k', label='Meta-Parameter')
+                    plt.legend()
+                    plt.show()
+                    plt.savefig('{}/{}_3d_umap.png'.format(args.plot_dir, epoch*len(train_loader) + episode), dpi=400)
+                    plt.clf()
+
             end_time = time.monotonic()
             acc /= (len(train_loader) * len(spt_xs))
             print("Acc: {:.2f}%,\tElapsed time: {}".format(acc*100, timedelta(end_time-start_time)))
