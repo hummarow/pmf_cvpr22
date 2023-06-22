@@ -1,3 +1,8 @@
+"""
+Code originally from https://github.com/dragen1860/MAML-Pytorch
+Modified.
+"""
+
 import torch
 import numpy as np
 import os
@@ -50,7 +55,9 @@ class Meta(nn.Module):
         self.net = Learner(config, args.imgc, args.imgsz)
         self.meta_optim = optim.Adam(self.net.parameters(), lr=self.meta_lr)
 
-        self.finetuned_parameter_list = []  # Updated by self.finetunning() method, the finetuned parameters per task are stored in a list
+        self.finetuned_parameter_list = (
+            []
+        )  # Updated by self.finetunning() method, the finetuned parameters per task are stored in a list
 
     def clip_grad_by_norm_(self, grad, max_norm):
         """
@@ -118,7 +125,50 @@ class Meta(nn.Module):
     def chaser_loss(self, weight_1, weight_2, lam):
         return self.proximal_reg(weight_1, weight_2, lam)
 
-    def forward(self, x_spt, y_spt, x_qry, y_qry,  spt_aug=None, qry_aug=None) -> float:
+    def finetune_without_query(self, x_spt, y_spt, spt_aug=None) -> float:
+        """
+        Used for first finetunning in 2-Tier Meta-Learning.
+        :param x_spt:   [b, setsz, c_, h, w]
+        :param y_spt:   [b, setsz]
+        :return:
+        """
+        # NOTE: The data augmentation is not implemented yet.
+        assert (
+            self.need_aug  # Needs augmentation.
+            and torch.is_tensor(spt_aug)  # Augmented data are given.
+        ) or (not self.aug)
+
+        task_num = len(x_spt)
+
+        phi = self.net.parameters()
+
+        finetuned_parameter = [phi] * task_num
+        # finetuned_parameter_aug = [phi] * task_num
+
+        for i in range(task_num):
+            # model with original data
+            for k in range(self.update_step):
+                # Update parameter with support data
+                logits = self.net(x_spt[i], finetuned_parameter[i], bn_training=True)
+                loss = F.cross_entropy(logits, y_spt[i])
+                grad = torch.autograd.grad(
+                    loss,
+                    finetuned_parameter[i],
+                    create_graph=(not self.first_order),
+                    retain_graph=(not self.first_order),
+                )
+                finetuned_parameter[i] = list(
+                    map(
+                        lambda p: p[1] - self.update_lr * p[0],
+                        zip(grad, finetuned_parameter[i]),
+                    )
+                )
+        # Get average point (prototype) of finetuned parameters
+        finetuned_parameter = torch.stack(finetuned_parameter, axis=0)
+        finetuned_parameter = torch.mean(finetuned_parameter, axis=0)
+        return finetuned_parameter
+
+    def forward(self, x_spt, y_spt, x_qry, y_qry, spt_aug=None, qry_aug=None, phi=None) -> float:
         """
         :param x_spt:   [b, setsz, c_, h, w]
         :param y_spt:   [b, setsz]
@@ -154,8 +204,8 @@ class Meta(nn.Module):
         loss_q = 0
         loss_q_aug = 0
         num_corrects = 0
-
-        phi = self.net.parameters()
+        if not phi:
+            phi = self.net.parameters()
 
         finetuned_parameter = [phi] * task_num
         finetuned_parameter_aug = [phi] * task_num
@@ -339,7 +389,9 @@ class Meta(nn.Module):
 
                 logits_q = net(x_qry[i], finetuned_parameter, bn_training=True)
                 loss_q = F.cross_entropy(logits_q, y_qry[i])
-                flat_parameter = np.concatenate([torch.flatten(p.detach().cpu()).numpy() for p in finetuned_parameter]).flatten()
+                flat_parameter = np.concatenate(
+                    [torch.flatten(p.detach().cpu()).numpy() for p in finetuned_parameter]
+                ).flatten()
             self.finetuned_parameter_list.append(flat_parameter)
 
             with torch.no_grad():
@@ -354,7 +406,7 @@ class Meta(nn.Module):
 
 # def main():
 #     pass
-# 
-# 
+#
+#
 # if __name__ == "__main__":
 #     main()
