@@ -125,11 +125,12 @@ class Meta(nn.Module):
     def chaser_loss(self, weight_1, weight_2, lam):
         return self.proximal_reg(weight_1, weight_2, lam)
 
-    def finetune_without_query(self, x_spt, y_spt, spt_aug=None) -> float:
+    def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None) -> float:
         """
         Used for first finetunning in 2-Tier Meta-Learning.
         :param x_spt:   [b, setsz, c_, h, w]
         :param y_spt:   [b, setsz]
+        :param phi:     list of meta parameters
         :return:
         """
         # NOTE: The data augmentation is not implemented yet.
@@ -139,34 +140,94 @@ class Meta(nn.Module):
         ) or (not self.aug)
 
         task_num = len(x_spt)
+        if not phi:
+            phi = self.net.parameters()
 
-        phi = self.net.parameters()
-
-        finetuned_parameter = [phi] * task_num
+        finetuned_parameters = [phi] * task_num
         # finetuned_parameter_aug = [phi] * task_num
 
         for i in range(task_num):
             # model with original data
             for k in range(self.update_step):
                 # Update parameter with support data
-                logits = self.net(x_spt[i], finetuned_parameter[i], bn_training=True)
+                logits = self.net(x_spt[i], finetuned_parameters[i], bn_training=True)
                 loss = F.cross_entropy(logits, y_spt[i])
                 grad = torch.autograd.grad(
                     loss,
-                    finetuned_parameter[i],
+                    finetuned_parameters[i],
                     create_graph=(not self.first_order),
                     retain_graph=(not self.first_order),
                 )
-                finetuned_parameter[i] = list(
+                finetuned_parameters[i] = list(
                     map(
                         lambda p: p[1] - self.update_lr * p[0],
-                        zip(grad, finetuned_parameter[i]),
+                        zip(grad, finetuned_parameters[i]),
                     )
                 )
         # Get average point (prototype) of finetuned parameters
-        finetuned_parameter = torch.stack(finetuned_parameter, axis=0)
-        finetuned_parameter = torch.mean(finetuned_parameter, axis=0)
-        return finetuned_parameter
+        # finetuned_parameters = torch.stack(finetuned_parameters, axis=0)
+        # finetuned_parameter = torch.mean(finetuned_parameter, axis=0)
+        return finetuned_parameters
+
+    def query(self, x_qry, y_qry, finetuned_parameters) -> float:
+        # NOTE: The augmented data is not implemented yet.
+        # NOTE: The argument finetuned_parameters is different from the 'phi'
+        #       in other methods. It is a list of parameters, not a single
+        loss_q = 0
+        num_corrects = 0
+        task_num = len(x_qry)
+        querysz = len(x_qry[0])
+        for i in range(task_num):
+            # Calculate loss with query data and updated parameter
+            logits_q = self.net(x_qry[i], finetuned_parameters[i], bn_training=True)
+            _task_loss = F.cross_entropy(logits_q, y_qry[i])
+            if not self.bmaml:
+                loss_q += _task_loss  # Sum of losses of all tasks
+
+            # # iMAML proximal regularizer
+            # Impossible without w_0 given.
+            # if (self.prox_task == 0 or self.prox_task == 2) and self.prox_lam > 0:
+            #     prox_reg = self.proximal_reg(w_0, finetuned_parameters[i], self.prox_lam)
+            #     loss_q += prox_reg
+
+            # # bMAML chaser loss
+            # if (self.chaser_task == 0 or self.chaser_task == 2) and self.chaser_lam > 0:
+            #     chaser = finetuned_parameters[i]
+            #     grad = torch.autograd.grad(
+            #         _task_loss,
+            #         finetuned_parameters[i],
+            #         create_graph=True,
+            #         retain_graph=True,
+            #     )
+            #     leader = list(
+            #         map(
+            #             lambda p: p[1] - self.chaser_lr * p[0],
+            #             zip(grad, finetuned_parameters[i]),
+            #         )
+            #     )
+            #     chaser_reg = self.chaser_loss(chaser, leader, self.chaser_lam)
+            #     loss_q += chaser_reg
+
+            with torch.no_grad():
+                pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
+                num_corrects += torch.eq(pred_q, y_qry[i]).sum().item()  # convert to numpy
+
+        loss_q = torch.div(loss_q, task_num)
+        acc = num_corrects / (querysz * task_num)  # Not directly used in the training.
+        return loss_q, acc
+        # Backwards need to be done in the caller function.
+        # # optimize theta parameters
+
+        # self.meta_optim.zero_grad()
+
+        # if self.bmaml:
+        #     loss_q.requires_grad = True
+        # loss_q.backward()
+
+        # self.meta_optim.step()
+        # acc = num_corrects / (querysz * task_num)
+
+        # return acc
 
     def forward(self, x_spt, y_spt, x_qry, y_qry, spt_aug=None, qry_aug=None, phi=None) -> float:
         """

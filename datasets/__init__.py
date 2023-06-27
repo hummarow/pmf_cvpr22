@@ -12,7 +12,7 @@ from .meta_h5_dataset import FullMetaDatasetH5
 from .meta_dataset.utils import Split
 
 
-def get_sets(args, two_tier=False):
+def get_sets(args):
     if args.dataset == "cifar_fs":
         from .cifar_fs import dataset_setting
     elif args.dataset == "cifar_fs_elite":  # + elite data augmentation
@@ -23,27 +23,27 @@ def get_sets(args, two_tier=False):
         if args.eval:
             trainSet = valSet = None
             testSet = FullMetaDatasetH5(args, Split.TEST)
-            if two_tier:
+            if args.two_tier:
                 testOuterSupportSet = FullMetaDatasetH5(args, Split.TEST)
         else:
             # Not checked when multiprocess.
             trainSet = {}
-            if two_tier:
+            if args.two_tier:
                 trainOuterSupportSet = {}
             if args.choose_train:
                 sources = args.base_sources
                 for source in sources:
                     args.base_sources = [source]
                     trainSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
-                    if two_tier:
+                    if args.two_tier:
                         trainOuterSupportSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
                 args.base_sources = sources
             else:
                 trainSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
-                if two_tier:
+                if args.two_tier:
                     trainOuterSupportSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
             valSet = {}
-            if two_tier:
+            if args.two_tier:
                 valOuterSupportSet = {}
             for source in args.val_sources:
                 valSet[source] = MetaValDataset(
@@ -52,7 +52,7 @@ def get_sets(args, two_tier=False):
                     ),
                     num_episodes=args.nValEpisode,
                 )
-                if two_tier:
+                if args.two_tier:
                     valOuterSupportSet[source] = MetaValDataset(
                         os.path.join(
                             args.data_path,
@@ -62,9 +62,9 @@ def get_sets(args, two_tier=False):
                         num_episodes=args.nValEpisode,
                     )
             testSet = None
-            if two_tier:
+            if args.two_tier:
                 testOuterSupportSet = None
-        if not two_tier:
+        if not args.two_tier:
             trainOuterSupportSet = valOuterSupportSet = testOuterSupportSet = None
         return (
             trainSet,
@@ -137,10 +137,10 @@ def task_collate(samples):
     return (support_images, support_labels, query_images, query_labels)
 
 
-def get_loaders(args, num_tasks, global_rank, two_tier=False):
+def get_loaders(args, num_tasks, global_rank):
     # datasets
     if args.eval:
-        _, _, dataset_vals, _, _, outer_support_set_vals = get_sets(args, two_tier=two_tier)
+        _, _, dataset_vals, _, _, outer_support_set_vals = get_sets(args)
     else:
         (
             dataset_trains,
@@ -167,11 +167,11 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
     # NOTE: meta-dataset has separate val-set per domain
     if not isinstance(dataset_vals, dict):
         dataset_vals = {"single": dataset_vals}
-        if two_tier:
+        if args.two_tier:
             outer_support_set_vals = {"single": outer_support_set_vals}
 
     data_loader_val = {}
-    if two_tier:
+    if args.two_tier:
         outer_support_data_loader_val = {}
     else:
         outer_support_data_loader_val = None
@@ -188,7 +188,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
                 sampler_val = torch.utils.data.DistributedSampler(
                     dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False
                 )
-                if two_tier:
+                if args.two_tier:
                     outer_support_set_vals[source] = torch.utils.data.DistributedSampler(
                         outer_support_set_vals[source],
                         num_replicas=num_tasks,
@@ -197,13 +197,13 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
                     )
             else:
                 sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-                if two_tier:
+                if args.two_tier:
                     outer_support_set_vals[source] = torch.utils.data.SequentialSampler(
                         outer_support_set_vals[source]
                     )
         else:
             sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-            if two_tier:
+            if args.two_tier:
                 outer_support_set_vals[source] = torch.utils.data.SequentialSampler(
                     outer_support_set_vals[source]
                 )
@@ -221,7 +221,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
             worker_init_fn=worker_init_fn,
             generator=generator,
         )
-        if two_tier:
+        if args.two_tier:
             outer_support_data_loader_val[source] = torch.utils.data.DataLoader(
                 outer_support_set_vals[source],
                 batch_size=1,
@@ -240,14 +240,14 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
 
     # Train loader
     data_loader_train = {}
-    if two_tier:
+    if args.two_tier:
         outer_support_data_loader_train = {}
     else:
         outer_support_data_loader_train = None
     for j, (source, dataset_train) in enumerate(dataset_trains.items()):
         if args.choose_train:
             sampler_train = torch.utils.data.SequentialSampler(dataset_trains)
-            if two_tier:
+            if args.two_tier:
                 outer_support_sampler_train = torch.utils.data.SequentialSampler(
                     outer_support_set_trains
                 )
@@ -257,7 +257,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
                     sampler_train = RASampler(
                         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
                     )
-                    if two_tier:
+                    if args.two_tier:
                         outer_support_sampler_train = RASampler(
                             outer_support_set_trains[source],
                             num_replicas=num_tasks,
@@ -268,7 +268,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
                     sampler_train = torch.utils.data.DistributedSampler(
                         dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
                     )
-                    if two_tier:
+                    if args.two_tier:
                         outer_support_sampler_train = torch.utils.data.DistributedSampler(
                             outer_support_set_trains[source],
                             num_replicas=num_tasks,
@@ -277,7 +277,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
                         )
             else:
                 sampler_train = torch.utils.data.RandomSampler(dataset_train)
-                if two_tier:
+                if args.two_tier:
                     outer_support_sampler_train = torch.utils.data.RandomSampler(
                         outer_support_set_trains[source]
                     )
@@ -296,7 +296,7 @@ def get_loaders(args, num_tasks, global_rank, two_tier=False):
             generator=generator,
             collate_fn=task_collate,
         )
-        if two_tier:
+        if args.two_tier:
             outer_support_data_loader_train[source] = torch.utils.data.DataLoader(
                 outer_support_set_trains[source],
                 sampler=outer_support_sampler_train,

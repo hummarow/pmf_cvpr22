@@ -22,7 +22,7 @@ class Learner(nn.Module):
         self.vars_bn = nn.ParameterList()
 
         self.config = []
-        
+
         self.append(config)
 
     def append(self, config):
@@ -84,12 +84,11 @@ class Learner(nn.Module):
 
     def pop(self):
         layer = self.config[-1]
-        if layer[0] == 'bn':
+        if layer[0] == "bn":
             self.vars_bn = self.vars_bn[:-2]
         self.vars = self.vars[:-2]
 
         self.config = self.config[:-1]
-
 
     def forward(self, x, vars=None, bn_training=True):
         """
@@ -188,4 +187,3 @@ class Learner(nn.Module):
         :return:
         """
         return self.vars
-

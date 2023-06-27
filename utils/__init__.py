@@ -7,6 +7,7 @@ import collections
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -28,20 +29,20 @@ def simple_accuracy(preds, labels):
 
 
 def save_model(args, model):
-    model_to_save = model.module if hasattr(model, 'module') else model
+    model_to_save = model.module if hasattr(model, "module") else model
     model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
     torch.save(model_to_save.state_dict(), model_checkpoint)
 
 
 def load_model(args, model):
-    model_to_save = model.module if hasattr(model, 'module') else model
+    model_to_save = model.module if hasattr(model, "module") else model
     model_checkpoint = os.path.join(args.output_dir, "%s_checkpoint.bin" % args.name)
-    model.load_state_dict(torch.load(model_checkpoint, map_location='cpu'))
+    model.load_state_dict(torch.load(model_checkpoint, map_location="cpu"))
 
 
 def count_parameters(model):
     params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return params/1000000
+    return params / 1000000
 
 
 def set_seed(args):
@@ -57,9 +58,9 @@ def to_device(data, device):
         return data.to(device=device, non_blocking=True)
     elif isinstance(data, str):
         return data
-    elif isinstance(data, collections.Mapping):
+    elif isinstance(data, collections.abc.Mapping):
         return {k: to_device(sample, device=device) for k, sample in data.items()}
-    elif isinstance(data, collections.Sequence):
+    elif isinstance(data, collections.abc.Sequence):
         return [to_device(sample, device=device) for sample in data]
     else:
         raise TypeError(f"data must contain tensor, dict or list, found {type(data)}")
