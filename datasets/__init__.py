@@ -214,7 +214,7 @@ def get_loaders(args, num_tasks, global_rank):
         data_loader_val[source] = torch.utils.data.DataLoader(
             dataset_val,
             sampler=sampler_val,
-            batch_size=1,
+            batch_size=args.task_num,  # Number of tasks when evaluating need to be checked again.
             num_workers=3,  # more workers can take too much CPU
             pin_memory=args.pin_mem,
             drop_last=False,
@@ -288,7 +288,7 @@ def get_loaders(args, num_tasks, global_rank):
         data_loader_train[source] = torch.utils.data.DataLoader(
             dataset_train,
             sampler=sampler_train,
-            batch_size=args.batch_size,
+            batch_size=args.task_num,
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
             drop_last=True,
@@ -300,7 +300,7 @@ def get_loaders(args, num_tasks, global_rank):
             outer_support_data_loader_train[source] = torch.utils.data.DataLoader(
                 outer_support_set_trains[source],
                 sampler=outer_support_sampler_train,
-                batch_size=args.batch_size,
+                batch_size=1,  # One finetuned_meta_parameter per source
                 num_workers=args.num_workers,
                 pin_memory=args.pin_mem,
                 drop_last=True,

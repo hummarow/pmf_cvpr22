@@ -237,15 +237,17 @@ class Trainer(object):
                     qry_xs, qry_ys, finetuned_parameters
                 )
                 loss.append(loss_per_source)
+                acc[train_source] = acc_per_source
             loss = torch.mean(torch.stack(loss))
             meta_learner.meta_optim.zero_grad()
             loss.backward()
             meta_learner.meta_optim.step()
             print("Epoch: [{}]".format(epoch))
             print("Loss: {:.2f}".format(loss))
-            # Print accuracy per source
+            # Print accuracy per source and average score
             for source, acc_per_source in acc.items():
                 print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
+            print("Average acc: {:.2f}%".format(np.mean(list(acc.values())) * 100))
 
     def evaluate(self):
         pass
