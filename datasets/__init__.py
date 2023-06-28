@@ -150,7 +150,6 @@ def get_loaders(args, num_tasks, global_rank):
             outer_support_set_vals,
             _,
         ) = get_sets(args)
-
     # Worker init function
     if "meta_dataset" in args.dataset:  # meta_dataset & meta_dataset_h5
         # worker_init_fn = partial(worker_init_fn_, seed=args.seed)
@@ -214,7 +213,8 @@ def get_loaders(args, num_tasks, global_rank):
         data_loader_val[source] = torch.utils.data.DataLoader(
             dataset_val,
             sampler=sampler_val,
-            batch_size=args.task_num,  # Number of tasks when evaluating need to be checked again.
+            # batch_size=args.task_num,  # Number of tasks when evaluating need to be checked again.
+            batch_size=1,
             num_workers=3,  # more workers can take too much CPU
             pin_memory=args.pin_mem,
             drop_last=False,
@@ -248,7 +248,7 @@ def get_loaders(args, num_tasks, global_rank):
         if args.choose_train:
             sampler_train = torch.utils.data.SequentialSampler(dataset_trains)
             if args.two_tier:
-                outer_support_sampler_train = torch.utils.data.SequentialSampler(
+                outer_support_sampler_train = torch.utils.data.RandomSampler(
                     outer_support_set_trains
                 )
         else:
@@ -287,7 +287,7 @@ def get_loaders(args, num_tasks, global_rank):
 
         data_loader_train[source] = torch.utils.data.DataLoader(
             dataset_train,
-            sampler=sampler_train,
+            # sampler=sampler_train,
             batch_size=args.task_num,
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,

@@ -56,7 +56,6 @@ class Trainer(object):
             self.data_loader_val,
             self.outer_support_set_val,
         ) = get_loaders(args, self.num_tasks, global_rank)
-        breakpoint()
         # Mixup regularization (by default OFF)
         self.mixup_fn = None
         mixup_active = args.mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
@@ -134,6 +133,8 @@ class Trainer(object):
 
     def train(self):
         for i, (train_source, train_loader) in enumerate(self.data_loader_train.items()):
+            if args.choose_train:
+                print("Training on {}".format(train_source))
             model = Meta(args, self.model_config_no_classifier)
             # Append linear layer to the model
             model.net.append(self.linear_config)
@@ -196,62 +197,116 @@ class Trainer(object):
 
     def train_2tier(self):
         assert self.args.choose_train == True
+        meta_learner = Meta(args, self.model_config_no_classifier)
+        meta_learner.net.append(self.linear_config)  # Append linear layer to the meta_learner
+        meta_learner.to(self.device)
         for epoch in range(args.start_epoch, args.epochs):
-            meta_learner = Meta(args, self.model_config_no_classifier)
-            meta_learner.net.append(self.linear_config)  # Append linear layer to the meta_learner
-            meta_learner.to(self.device)
-            loss = []
-            finetuned_meta_parameters = []
-            acc = {}  # source: acc
-            # Iterate over outer-support-set to get fintuned meta-parameters per source
-            for i, (train_source, outer_support_loader) in enumerate(
-                self.outer_support_set_train.items()
+            # Iterate for minimum length of the outer-support-set
+            for episode in range(
+                min([len(loader) for loader in self.outer_support_set_train.values()])
             ):
-                params_per_source = []
-                batch = next(iter(outer_support_loader))
-                batch = to_device(batch, self.device)
-                # TODO: number of tasks in the outer-support-set IS ALREADY 1.
-                #       Check why it is the case.
-                spt_xs, spt_ys, _, _ = batch  # Outer support set
+                meta_learner.train()
+                loss = []
+                finetuned_meta_parameters = []
+                acc = {}  # source: acc
+                # Iterate over outer-support-set to get fintuned meta-parameters per source
+                for i, (train_source, outer_support_loader) in enumerate(
+                    self.outer_support_set_train.items()
+                ):
+                    params_per_source = []
+                    batch = next(iter(outer_support_loader))
+                    batch = to_device(batch, self.device)
+                    # TODO: number of tasks in the outer-support-set IS ALREADY 1.
+                    #       Check why it is the case.
+                    spt_xs, spt_ys, _, _ = batch  # Outer support set
 
-                finetuned_meta_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
-                finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
-                finetuned_meta_parameter = []
-                for params in finetuned_meta_parameters:
-                    average_params = torch.mean(torch.stack(params), axis=0).tolist()
-                    finetuned_meta_parameter.append(average_params)
+                    finetuned_meta_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
+                    finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
+                    finetuned_meta_parameter = []
+                    for params in finetuned_meta_parameters:
+                        average_params = torch.mean(torch.stack(params), axis=0).tolist()
+                        finetuned_meta_parameter.append(average_params)
 
-                # finetuned_meta_parameter = torch.mean(
-                #     meta_learner.finetune_without_query(spt_xs, spt_ys), axis=0
-                # )
+                    # finetuned_meta_parameter = torch.mean(
+                    #     meta_learner.finetune_without_query(spt_xs, spt_ys), axis=0
+                    # )
 
-                train_loader = self.data_loader_train[train_source]
+                    train_loader = self.data_loader_train[train_source]
 
-                batch = next(iter(train_loader))
-                batch = to_device(batch, self.device)
-                # inner step
-                spt_xs, spt_ys, qry_xs, qry_ys = batch
-                # finetuned_parameters = meta_learner.finetune_without_query(
-                #     spt_xs, spt_ys, finetuned_meta_parameter
-                # )
-                finetuned_parameters = meta_learner.finetune_without_query(
-                    spt_xs, spt_ys, finetuned_meta_parameter
-                )
-                loss_per_source, acc_per_source = meta_learner.query(
-                    qry_xs, qry_ys, finetuned_parameters
-                )
-                loss.append(loss_per_source)
-                acc[train_source] = acc_per_source
-            loss = torch.mean(torch.stack(loss))
-            meta_learner.meta_optim.zero_grad()
-            loss.backward()
-            meta_learner.meta_optim.step()
-            print("Epoch: [{}]".format(epoch))
-            print("Loss: {:.2f}".format(loss))
-            # Print accuracy per source and average score
-            for source, acc_per_source in acc.items():
-                print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
-            print("Average acc: {:.2f}%".format(np.mean(list(acc.values())) * 100))
+                    batch = next(iter(train_loader))
+                    batch = to_device(batch, self.device)
+                    # inner step
+                    spt_xs, spt_ys, qry_xs, qry_ys = batch
+                    finetuned_parameters = meta_learner.finetune_without_query(
+                        spt_xs, spt_ys, finetuned_meta_parameter
+                    )
+                    # finetuned_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
+                    loss_per_source, acc_per_source = meta_learner.query(
+                        qry_xs, qry_ys, finetuned_parameters
+                    )
+                    loss.append(loss_per_source)
+                    acc[train_source] = acc_per_source
+                loss = torch.mean(torch.stack(loss))
+                meta_learner.meta_optim.zero_grad()
+                loss.backward()
+                meta_learner.meta_optim.step()
+                if episode % 10 == 0:
+                    print("Episode: [{}]".format(episode))
+                    print("Loss: {:.2f}".format(loss))
+                    # Print accuracy per source and average score
+                    for source, acc_per_source in acc.items():
+                        print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
+                    print("Average acc: {:.2f}%".format(np.mean(list(acc.values())) * 100))
+
+                # if episode % 100 == 0:
+                #     meta_learner.eval()
+                #     # Evaluate
+                #     val_acc = 0
+                #     params = []
+                #     tsne_ranges = {}
+                #     param_per_epoch = defaultdict(list)
+                #     for i, (val_source, outer_support_loader) in enumerate(
+                #         self.outer_support_set_val.items()
+                #     ):
+                #         params_per_source = []
+                #         batch = next(iter(outer_support_loader))
+                #         batch = to_device(batch, self.device)
+                #         # TODO: number of tasks in the outer-support-set IS ALREADY 1.
+                #         #       Check why it is the case.
+                #         spt_xs, spt_ys, _, _ = batch  # Outer support set
+
+                #         finetuned_meta_parameters = meta_learner.finetune_without_query(
+                #             spt_xs, spt_ys
+                #         )
+                #         finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
+                #         finetuned_meta_parameter = []
+                #         for params in finetuned_meta_parameters:
+                #             average_params = torch.mean(torch.stack(params), axis=0).tolist()
+                #             finetuned_meta_parameter.append(average_params)
+
+                #         # finetuned_meta_parameter = torch.mean(
+                #         #     meta_learner.finetune_without_query(spt_xs, spt_ys), axis=0
+                #         # )
+
+                #         val_loader = self.data_loader_val[val_source]
+
+                #         batch = next(iter(val_loader))
+                #         batch = to_device(batch, self.device)
+                #         # inner step
+                #         spt_xs, spt_ys, qry_xs, qry_ys = batch
+                #         finetuned_parameters = meta_learner.finetune_without_query(
+                #             spt_xs, spt_ys, finetuned_meta_parameter
+                #         )
+                #         # finetuned_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
+                #         val_loss_per_source, val_acc_per_source = meta_learner.query(
+                #             qry_xs, qry_ys, finetuned_parameters
+                #         )
+
+                #         val_acc_per_loader /= len(val_loader) * len(spt_xs)
+                #         print("{} acc: {:.2f}%".format(source, val_acc_per_loader * 100))
+                #         val_acc += val_acc_per_loader
+                #     val_acc /= len(self.data_loader_val)
+                #     print("Average val acc: {}%".format(val_acc * 100))
 
     def evaluate(self):
         pass
