@@ -56,7 +56,7 @@ class Trainer(object):
             self.data_loader_val,
             self.outer_support_set_val,
         ) = get_loaders(args, self.num_tasks, global_rank)
-
+        breakpoint()
         # Mixup regularization (by default OFF)
         self.mixup_fn = None
         mixup_active = args.mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
@@ -143,8 +143,9 @@ class Trainer(object):
                 print(header)
                 start_time = time.monotonic()
                 print_freq = 10
-                # for batch in metric_logger.log_every(self.data_loader_train, print_freq, header):
                 acc = 0
+                # for batch in metric_logger.log_every(self.data_loader_train, print_freq, header):
+                print(len(train_loader))
                 for episode, batch in enumerate(train_loader):
                     acc_per_episode = self._train_one_batch(batch, model, self.device)
                     acc += acc_per_episode
@@ -230,6 +231,9 @@ class Trainer(object):
                 batch = to_device(batch, self.device)
                 # inner step
                 spt_xs, spt_ys, qry_xs, qry_ys = batch
+                # finetuned_parameters = meta_learner.finetune_without_query(
+                #     spt_xs, spt_ys, finetuned_meta_parameter
+                # )
                 finetuned_parameters = meta_learner.finetune_without_query(
                     spt_xs, spt_ys, finetuned_meta_parameter
                 )
@@ -375,5 +379,7 @@ if __name__ == "__main__":
         args.choose_train = True
 
     trainer = Trainer(args)
-    # trainer.train()
-    trainer.train_2tier()
+    if args.two_tier:
+        trainer.train_2tier()
+    else:
+        trainer.train()
