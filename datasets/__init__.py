@@ -172,8 +172,10 @@ def get_loaders(args, num_tasks, global_rank):
     data_loader_val = {}
     if args.two_tier:
         outer_support_data_loader_val = {}
+        outer_support_set_samplers = {}
     else:
         outer_support_data_loader_val = None
+        outer_support_set_samplers = None
 
     for j, (source, dataset_val) in enumerate(dataset_vals.items()):
         if args.distributed:
@@ -188,7 +190,7 @@ def get_loaders(args, num_tasks, global_rank):
                     dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False
                 )
                 if args.two_tier:
-                    outer_support_set_vals[source] = torch.utils.data.DistributedSampler(
+                    outer_support_set_samplers[source] = torch.utils.data.DistributedSampler(
                         outer_support_set_vals[source],
                         num_replicas=num_tasks,
                         rank=global_rank,
@@ -197,13 +199,13 @@ def get_loaders(args, num_tasks, global_rank):
             else:
                 sampler_val = torch.utils.data.SequentialSampler(dataset_val)
                 if args.two_tier:
-                    outer_support_set_vals[source] = torch.utils.data.SequentialSampler(
+                    outer_support_set_samplers[source] = torch.utils.data.SequentialSampler(
                         outer_support_set_vals[source]
                     )
         else:
             sampler_val = torch.utils.data.SequentialSampler(dataset_val)
             if args.two_tier:
-                outer_support_set_vals[source] = torch.utils.data.SequentialSampler(
+                outer_support_set_samplers[source] = torch.utils.data.SequentialSampler(
                     outer_support_set_vals[source]
                 )
 
@@ -225,6 +227,8 @@ def get_loaders(args, num_tasks, global_rank):
             outer_support_data_loader_val[source] = torch.utils.data.DataLoader(
                 outer_support_set_vals[source],
                 batch_size=1,
+                shuffle=True,
+                # sampler=outer_support_set_samplers[source],
                 num_workers=3,  # more workers can take too much CPU
                 pin_memory=args.pin_mem,
                 drop_last=False,
@@ -299,7 +303,8 @@ def get_loaders(args, num_tasks, global_rank):
         if args.two_tier:
             outer_support_data_loader_train[source] = torch.utils.data.DataLoader(
                 outer_support_set_trains[source],
-                sampler=outer_support_sampler_train,
+                # sampler=outer_support_sampler_train,
+                shuffle=True,
                 batch_size=1,  # One finetuned_meta_parameter per source
                 num_workers=args.num_workers,
                 pin_memory=args.pin_mem,

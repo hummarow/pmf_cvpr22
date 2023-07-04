@@ -637,4 +637,9 @@ def get_args_parser():
         help="Bmaml loss only",
         default=False,
     )
+    # TEMP
+    parser.add_argument(
+        "--one_tier",
+        action="store_true",
+    )
     return parser
