@@ -542,8 +542,22 @@ def get_args_parser():
         help="task-level inner update learning rate",
         default=0.01,
     )
+    # inner_update_lr only for 2-tier
+    parser.add_argument(
+        "--inner_update_lr",
+        type=float,
+        help="task-level inner update learning rate",
+        default=0.001,
+    )
     parser.add_argument(
         "--update_step",
+        type=int,
+        help="task-level inner update steps",
+        default=5,
+    )
+    # inner_update_step only for 2-tier
+    parser.add_argument(
+        "--inner_update_step",
         type=int,
         help="task-level inner update steps",
         default=5,

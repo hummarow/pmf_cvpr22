@@ -30,10 +30,12 @@ class Meta(nn.Module):
         super(Meta, self).__init__()
 
         self.update_lr = args.update_lr
+        self.inner_update_lr = args.inner_update_lr  # Inner loop learning rate (Only for 2-tier)
         self.meta_lr = args.meta_lr
         self.n_way = args.n_way
         self.task_num = args.task_num
         self.update_step = args.update_step
+        self.inner_update_step = args.inner_update_step  # Inner loop update step (Only for 2-tier)
         self.update_step_test = args.update_step_test
         self.reg = args.reg
         self.aug = args.aug
@@ -125,7 +127,7 @@ class Meta(nn.Module):
     def chaser_loss(self, weight_1, weight_2, lam):
         return self.proximal_reg(weight_1, weight_2, lam)
 
-    def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None) -> float:
+    def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None, inner=False) -> float:
         """
         Used for first finetunning in 2-Tier Meta-Learning.
         :param x_spt:   [b, setsz, c_, h, w]
@@ -134,10 +136,18 @@ class Meta(nn.Module):
         :return:
         """
         # NOTE: The data augmentation is not implemented yet.
+        # NOTE:
         assert (
             self.need_aug  # Needs augmentation.
             and torch.is_tensor(spt_aug)  # Augmented data are given.
         ) or (not self.aug)
+
+        if inner:
+            update_lr = self.inner_update_lr
+            update_step = self.inner_update_step
+        else:
+            update_lr = self.update_lr
+            update_step = self.update_step
 
         task_num = len(x_spt)
         if not phi:
@@ -148,7 +158,7 @@ class Meta(nn.Module):
 
         for i in range(task_num):
             # model with original data
-            for k in range(self.update_step):
+            for k in range(update_step):
                 # Update parameter with support data
                 logits = self.net(x_spt[i], finetuned_parameters[i], bn_training=True)
                 loss = F.cross_entropy(logits, y_spt[i])
@@ -160,7 +170,7 @@ class Meta(nn.Module):
                 )
                 finetuned_parameters[i] = list(
                     map(
-                        lambda p: p[1] - self.update_lr * p[0],
+                        lambda p: p[1] - update_lr * p[0],
                         zip(grad, finetuned_parameters[i]),
                     )
                 )

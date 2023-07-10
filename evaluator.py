@@ -27,7 +27,7 @@ from models import get_model
 from models.meta import Meta
 
 
-class Trainer(object):
+class Evaluator(object):
     def __init__(self, args):
         args.distributed = True
         self.device = torch.device(args.device)
@@ -132,70 +132,6 @@ class Trainer(object):
         acc_per_episode = model(spt_xs, spt_ys, qry_xs, qry_ys, phi=phi)
         return acc_per_episode
 
-    def train(self):
-        for i, (train_source, train_loader) in enumerate(self.data_loader_train.items()):
-            if args.choose_train:
-                print("Training on {}".format(train_source))
-            model = Meta(args, self.model_config_no_classifier)
-            # Append linear layer to the model
-            model.net.append(self.linear_config)
-            model.to(self.device)
-            for epoch in range(args.start_epoch, args.epochs):
-                header = "Epoch: [{}]".format(epoch)
-                print(header)
-                start_time = time.monotonic()
-                print_freq = 10
-                acc = 0
-                # for batch in metric_logger.log_every(self.data_loader_train, print_freq, header):
-                print(len(train_loader))
-                for episode, batch in enumerate(train_loader):
-                    acc_per_episode = self._train_one_batch(batch, model, self.device)
-                    acc += acc_per_episode
-
-                    if episode % 20 == 0:
-                        print("Episode: [{}]".format(epoch * len(train_loader) + episode))
-                        print("Train Acc: {:.2f}%".format(acc_per_episode * 100))
-                    if episode % 100 == 0:
-                        # Evaluate
-                        val_acc = 0
-                        params = []
-                        tsne_ranges = {}
-                        param_per_epoch = defaultdict(list)
-                        for j, (source, val_loader) in enumerate(self.data_loader_val.items()):
-                            val_acc_per_loader = 0
-                            start_index = len(params)
-                            for batch in val_loader:
-                                batch = to_device(batch, self.device)
-                                spt_xs, spt_ys, qry_xs, qry_ys = batch
-                                for task_idx, (spt_x, spt_y, qry_x, qry_y) in enumerate(
-                                    zip(spt_xs, spt_ys, qry_xs, qry_ys)
-                                ):
-                                    val_acc_per_loader += model.finetunning(
-                                        spt_x, spt_y, qry_x, qry_y
-                                    )
-                                # Get finetuned parameters per source
-                                params.extend(model.finetuned_parameter_list)
-                                param_per_epoch[source].extend(model.finetuned_parameter_list)
-                                tsne_ranges[source] = slice(start_index, len(params))
-                            val_acc_per_loader /= len(val_loader) * len(spt_xs)
-                            print("{} acc: {:.2f}%".format(source, val_acc_per_loader * 100))
-                            val_acc += val_acc_per_loader
-                        val_acc /= len(self.data_loader_val)
-                        print("Average val acc: {}%".format(val_acc * 100))
-
-                        # Save finetuned parameters
-                        # if num_all_parameters == 0:
-                        #     num_all_parameters = len(params) + 1
-
-                end_time = time.monotonic()
-                acc /= len(train_loader) * len(spt_xs)
-                print(
-                    "Acc: {:.2f}%,\tElapsed time: {}".format(
-                        acc * 100, timedelta(end_time - start_time)
-                    )
-                )
-            del model
-
     def train_2tier(self):
         assert self.args.choose_train == True
         meta_learner = Meta(args, self.model_config_no_classifier)
@@ -231,11 +167,9 @@ class Trainer(object):
                     batch = to_device(batch, self.device)
                     # TODO: number of tasks in the outer-support-set IS ALREADY 1.
                     #       Check why it is the case.
-                    outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
+                    spt_xs, spt_ys, _, _ = batch  # Outer support set
 
-                    finetuned_meta_parameters = meta_learner.finetune_without_query(
-                        outer_spt_xs, outer_spt_ys
-                    )
+                    finetuned_meta_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
                     finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
                     finetuned_meta_parameter = []
                     for params in finetuned_meta_parameters:
@@ -260,7 +194,7 @@ class Trainer(object):
                     if args.one_tier:
                         finetuned_meta_parameter = None
                     finetuned_parameters = meta_learner.finetune_without_query(
-                        spt_xs, spt_ys, phi=finetuned_meta_parameter, inner=True
+                        spt_xs, spt_ys, phi=finetuned_meta_parameter
                     )
                     for param in finetuned_parameters:
                         param_log[train_source].append(
@@ -289,7 +223,7 @@ class Trainer(object):
                 loss.backward()
                 meta_learner.meta_optim.step()
                 average_accuarcy = np.mean(list(acc.values()))
-                self.writer.add_scalar("Loss/train/average", loss, episode_over_total_epochs)
+                self.writer.add_scalar("Loss/train/avereage", loss, episode_over_total_epochs)
                 self.writer.add_scalar(
                     "Acc/train/average", average_accuarcy, episode_over_total_epochs
                 )
@@ -301,11 +235,11 @@ class Trainer(object):
                         print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
                     print("Average acc: {:.2f}%".format(average_accuarcy * 100))
                     # Plot parameters
-                    self.plot_parameters(param_log, episode_over_total_epochs)
+                    # self.plot_parameters(param_log, episode_over_total_epochs)
                 if episode_over_total_epochs % 100 == 0:
-                    self.evaluate(meta_learner, episode_over_total_epochs)
+                    self.evaluate(meta_learner)
 
-    def evaluate(self, meta_learner, epoch):
+    def evaluate(self, meta_learner):
         print("Evaluate")
         meta_learner.eval()
         # Evaluate
@@ -321,8 +255,7 @@ class Trainer(object):
             outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
 
             finetuned_meta_parameters = meta_learner.finetune_without_query(
-                outer_spt_xs,
-                outer_spt_ys,
+                outer_spt_xs, outer_spt_ys
             )
             finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
             finetuned_meta_parameter = []
@@ -338,29 +271,27 @@ class Trainer(object):
             spt_xs, spt_ys, qry_xs, qry_ys = batch
             if args.one_tier:
                 finetuned_meta_parameter = None
-            # finetuned_parameters = meta_learner.finetune_without_query(
-            #     spt_xs, spt_ys, phi=finetuned_meta_parameter, inner=True
-            # )
-            # Evaluate 땐 원래 lr로 학습 시도.
             finetuned_parameters = meta_learner.finetune_without_query(
-                spt_xs,
-                spt_ys,
-                phi=finetuned_meta_parameter,
+                spt_xs, spt_ys, phi=finetuned_meta_parameter
             )
             # finetuned_parameters = meta_learner.finetune_without_query(spt_xs, spt_ys)
             val_loss_per_source, val_acc_per_source = meta_learner.query(
                 qry_xs, qry_ys, finetuned_parameters
             )
             # val_acc_per_source /= len(val_loader) * len(spt_xs)
-            self.writer.add_scalar("Loss/val/{}".format(val_source), val_loss_per_source, epoch)
-            self.writer.add_scalar("Acc/val/{}".format(val_source), val_acc_per_source, epoch)
+            self.writer.add_scalar(
+                "Loss/val/{}".format(val_source), val_loss_per_source, episode_over_total_epochs
+            )
+            self.writer.add_scalar(
+                "Acc/val/{}".format(val_source), val_acc_per_source, episode_over_total_epochs
+            )
             print("{} acc: {:.2f}%".format(val_source, val_acc_per_source * 100))
             val_acc += val_acc_per_source
             val_loss += val_loss_per_source
         val_acc /= len(self.data_loader_val)
         val_loss /= len(self.data_loader_val)
-        self.writer.add_scalar("Loss/val/average", val_loss, epoch)
-        self.writer.add_scalar("Acc/val/average", val_acc, epoch)
+        self.writer.add_scalar("Loss/val/average", val_loss, episode_over_total_epochs)
+        self.writer.add_scalar("Acc/val/average", val_acc, episode_over_total_epochs)
         print("Average val acc: {}%".format(val_acc * 100))
         print("Average val loss: {}".format(val_loss))
 
@@ -373,7 +304,7 @@ class Trainer(object):
         print("Plotting parameters T-SNE")
         colors = ["b", "g", "r", "c", "m", "y", "blueviolet", "magenta", "peru", "lime"]
         if mode == "tsne":
-            model = TSNE(n_components=2, random_state=1004, perplexity=5)
+            model = TSNE(n_components=2, random_state=1004)
         elif mode == "umap":
             model = umap.UMAP(random_state=1004)
         # Convert parameters to a flat list
@@ -430,39 +361,6 @@ class Trainer(object):
             bbox_inches="tight",
         )
         plt.clf()
-        # # Test 3d
-        # tsne = TSNE(n_components=3, random_state=1004)
-        # embedding = tsne.fit_transform(np.array(params))
-        # fig = plt.figure()
-        # ax = fig.add_subplot(projection="3d")
-        # for i, source in enumerate(tsne_ranges.keys()):
-        #     xs = embedding[tsne_ranges[source], 0]
-        #     ys = embedding[tsne_ranges[source], 1]
-        #     zs = embedding[tsne_ranges[source], 2]
-        #     ax.scatter(xs, ys, zs, c=colors[i], label=source)
-        # ax.scatter(embedding[-1, 0], embedding[-1, 1], c="k", label="Meta-Parameter")
-        # plt.legend()
-        # plt.show()
-        # plt.savefig(
-        #     "{}/{}_3d.png".format(args.plot_dir, epoch * len(train_loader) + episode), dpi=400
-        # )
-        # plt.clf()
-        # del tsne
-        # embedding = umap.UMAP(n_components=3, random_state=1004).fit_transform(np.array(params))
-        # fig = plt.figure()
-        # ax = fig.add_subplot(projection="3d")
-        # for i, source in enumerate(tsne_ranges.keys()):
-        #     xs = embedding[tsne_ranges[source], 0]
-        #     ys = embedding[tsne_ranges[source], 1]
-        #     zs = embedding[tsne_ranges[source], 2]
-        #     ax.scatter(xs, ys, zs, c=colors[i], label=source)
-        # ax.scatter(embedding[-1, 0], embedding[-1, 1], c="k", label="Meta-Parameter")
-        # plt.legend()
-        # plt.show()
-        # plt.savefig(
-        #     "{}/{}_3d_umap.png".format(args.plot_dir, epoch * len(train_loader) + episode), dpi=400
-        # )
-        # plt.clf()
 
 
 if __name__ == "__main__":
@@ -471,8 +369,4 @@ if __name__ == "__main__":
     if args.two_tier:
         args.choose_train = True
 
-    trainer = Trainer(args)
-    if args.two_tier:
-        trainer.train_2tier()
-    else:
-        trainer.train()
+    evaluator = Evaluator(args)
