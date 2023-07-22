@@ -299,6 +299,7 @@ def get_loaders(args, num_tasks, global_rank):
             worker_init_fn=worker_init_fn,
             generator=generator,
             collate_fn=task_collate,
+            shuffle=True,
         )
         if args.two_tier:
             outer_support_data_loader_train[source] = torch.utils.data.DataLoader(
