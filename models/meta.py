@@ -4,9 +4,11 @@ Modified.
 """
 
 import torch
+import random
 import numpy as np
 import os
 import typing
+import time
 from torch import nn
 from torch import optim
 from torch.nn import functional as F
@@ -15,6 +17,52 @@ from torch.utils.tensorboard import SummaryWriter
 from torch import linalg as LA
 from .learner import Learner
 from copy import deepcopy
+from torchvision.transforms import transforms
+from torchvision.transforms import functional as TF
+
+
+class Rotate:
+    def __init__(self, angles: list):
+        self.angles = angles
+
+    def __call__(self, img):
+        angle = random.choice(self.angles)
+        return TF.rotate(img, angle)
+
+
+def augmentation(img):
+    """
+    Return a [flipped, rotated] image.
+    if no augmentation is required,
+    return input image without any transformation.
+    """
+    # Random crop images and restore to original size
+    original_size = img.size()
+    crop = transforms.Compose([transforms.RandomCrop(84), transforms.Resize(original_size[2])])
+
+    # Recolor image
+    recolor = transforms.Compose(
+        [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)]
+    )
+    return [TF.vflip(img), crop(img), recolor(img)]
+
+
+def InfoNCE(keys, queries, t=0.1):
+    batch_size = keys.shape[0]
+    length = keys.shape[1]
+
+    pos = torch.exp(
+        torch.div(
+            torch.sum(
+                
+            )
+            torch.bmm(keys.view(batch_size, 1, length), queries.view(batch_size, length, 1)).view(
+                batch_size, 1
+            ),
+            t,
+        )
+    )
+    neg = torch.sum([torch.sum(torch.exp(torch.div(torch.mm(keys.view(batch_size, length), query.view()))))])
 
 
 class Meta(nn.Module):
@@ -51,6 +99,7 @@ class Meta(nn.Module):
         self.chaser_task = args.chaser_task
         self.chaser_lr = args.chaser_lr
         self.bmaml = args.bmaml
+        self.linear_shape = args.linear_shape
         if self.bmaml:
             self.chaser_lam = 1.0
 
@@ -126,6 +175,76 @@ class Meta(nn.Module):
 
     def chaser_loss(self, weight_1, weight_2, lam):
         return self.proximal_reg(weight_1, weight_2, lam)
+
+    def contrastive(self, x_spt) -> float:
+        """
+        Used for first finetunning in 2-Tier Meta-Learning.
+        :param x_spt:   [b, setsz, c_, h, w]
+        :param y_spt:   [b, setsz]
+        :param phi:     list of meta parameters
+        :return:
+        """
+
+        update_lr = self.inner_update_lr
+        update_step = self.inner_update_step
+        # update_lr = self.update_lr
+        # update_step = self.update_step
+
+        task_num = len(x_spt)
+        # finetuned_parameter_aug = [phi] * task_num
+
+        # Augment data
+        x_spt_aug = [augmentation(img) for img in x_spt]
+        self.net.cpu()
+        # Detach head
+        # Save weights of the last layer and initialize it with zeros
+        # linear_weights = [self.net.vars[-2].data.cpu().clone(), self.net.vars[-1].data.cpu().clone()]
+        # self.net.vars[-2].data = torch.zeros_like(self.net.vars[-2].data)
+        contrastive_model = deepcopy(self.net)
+        contrastive_model.pop()
+        contrastive_model.append(
+            [
+                ("linear", [128, 32 * self.linear_shape]),
+                ("linear", [64, 128]),
+                ("linear", [32, 64]),
+            ]
+        )
+        contrastive_model.cuda()
+        phi = contrastive_model.parameters()
+
+        finetuned_parameters = [phi] * task_num
+
+        # Calculate contrastive loss
+
+        # InfoNCE loss or NT-Xent loss
+
+        for i in range(task_num):
+            # model with original data
+            for k in range(update_step):
+                # Update parameter with support data
+                keys = contrastive_model(x_spt[i], finetuned_parameters[i], bn_training=True)
+                breakpoint()
+                queries = [
+                    contrastive_model(x, finetuned_parameters[i], bn_training=True)
+                    for x in x_spt_aug[i]
+                ]
+
+                loss = InfoNCE(keys, queries)
+
+                grad = torch.autograd.grad(
+                    loss,
+                    finetuned_parameters[i],
+                    create_graph=(not self.first_order),
+                    retain_graph=(not self.first_order),
+                )
+                finetuned_parameters[i] = list(
+                    map(
+                        lambda p: p[1] - update_lr * p[0],
+                        zip(grad, finetuned_parameters[i]),
+                    )
+                )
+        self.net.cuda()
+        return finetuned_parameters
 
     def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None, inner=False) -> float:
         """

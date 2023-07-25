@@ -25,7 +25,7 @@ class Learner(nn.Module):
 
         self.append(config)
 
-    def append(self, config):
+    def append(self, config, zero=False):
         self.config.extend(config)
         for i, (name, param) in enumerate(config):
             if name == "conv2d":
@@ -50,7 +50,10 @@ class Learner(nn.Module):
                 # [ch_out, ch_in]
                 w = nn.Parameter(torch.ones(*param))
                 # gain=1 according to cbfinn's implementation
-                torch.nn.init.kaiming_normal_(w)
+                if zero:
+                    torch.nn.init.zeros_(w)
+                else:
+                    torch.nn.init.kaiming_normal_(w)
                 self.vars.append(w)
                 # [ch_out]
                 self.vars.append(nn.Parameter(torch.zeros(param[0])))
@@ -83,12 +86,18 @@ class Learner(nn.Module):
                 raise NotImplementedError
 
     def pop(self):
+        layer_old, vars_old = self.config[-1], self.vars[-2:]
         layer = self.config[-1]
         if layer[0] == "bn":
+            vars_bn_old = self.vars_bn[-2:]
             self.vars_bn = self.vars_bn[:-2]
+        else:
+            vars_bn_old = None
         self.vars = self.vars[:-2]
 
         self.config = self.config[:-1]
+
+        return layer_old, vars_old, vars_bn_old
 
     def forward(self, x, vars=None, bn_training=True):
         """

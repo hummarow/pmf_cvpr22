@@ -123,6 +123,7 @@ class Trainer(object):
         self.linear_config = [
             ("linear", [args.n_way, 32 * _linear_shape]),
         ]
+        args.linear_shape = _linear_shape
 
         self.args = args
         print(self.args)
@@ -301,7 +302,7 @@ class Trainer(object):
                     # TODO: number of tasks in the outer-support-set IS ALREADY 1.
                     #       Check why it is the case.
                     outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
-
+                    meta_learner.contrastive(outer_spt_xs)
                     finetuned_meta_parameters = meta_learner.finetune_without_query(
                         outer_spt_xs, outer_spt_ys
                     )
