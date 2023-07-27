@@ -264,8 +264,6 @@ class Trainer(object):
             meta_parameters[train_source] = model.net.parameters()
             del model
 
-        #
-
     def train_2tier(self):
         assert self.args.choose_train == True
         meta_learner = Meta(args, self.model_config_no_classifier)
@@ -302,10 +300,10 @@ class Trainer(object):
                     # TODO: number of tasks in the outer-support-set IS ALREADY 1.
                     #       Check why it is the case.
                     outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
-                    meta_learner.contrastive(outer_spt_xs)
-                    finetuned_meta_parameters = meta_learner.finetune_without_query(
-                        outer_spt_xs, outer_spt_ys
-                    )
+                    finetuned_meta_parameters = meta_learner.contrastive(outer_spt_xs)
+                    # finetuned_meta_parameters = meta_learner.finetune_without_query(
+                    #     outer_spt_xs, outer_spt_ys
+                    # )
                     finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
                     finetuned_meta_parameter = []
                     for params in finetuned_meta_parameters:
@@ -370,10 +368,10 @@ class Trainer(object):
                     for source, acc_per_source in acc.items():
                         print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
                     print("Average acc: {:.2f}%".format(average_accuarcy * 100))
-                    # Plot parameters
-                    # self.plot_parameters(param_log, episode_over_total_epochs)
                 if episode_over_total_epochs % 100 == 0:
                     self.evaluate(meta_learner, episode_over_total_epochs)
+                    # Plot parameters
+                    self.plot_parameters(param_log, episode_over_total_epochs)
 
     def evaluate(self, meta_learner, epoch):
         print("Evaluate")
@@ -390,10 +388,12 @@ class Trainer(object):
             batch = to_device(batch, self.device)
             outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
 
-            finetuned_meta_parameters = meta_learner.finetune_without_query(
-                outer_spt_xs,
-                outer_spt_ys,
-            )
+            finetuned_meta_parameters = meta_learner.contrastive(outer_spt_xs)
+
+            # finetuned_meta_parameters = meta_learner.finetune_without_query(
+            #     outer_spt_xs,
+            #     outer_spt_ys,
+            # )
             finetuned_meta_parameters = list(zip(*finetuned_meta_parameters))
             finetuned_meta_parameter = []
             for params in finetuned_meta_parameters:
@@ -404,13 +404,11 @@ class Trainer(object):
 
             batch = next(iter(val_loader))
             batch = to_device(batch, self.device)
+
             # inner step
             spt_xs, spt_ys, qry_xs, qry_ys = batch
             if args.one_tier:
                 finetuned_meta_parameter = None
-            # finetuned_parameters = meta_learner.finetune_without_query(
-            #     spt_xs, spt_ys, phi=finetuned_meta_parameter, inner=True
-            # )
             finetuned_parameters = meta_learner.finetune_without_query(
                 spt_xs, spt_ys, phi=finetuned_meta_parameter, inner=True
             )

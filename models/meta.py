@@ -13,6 +13,7 @@ from torch import nn
 from torch import optim
 from torch.nn import functional as F
 from torch.utils.data import TensorDataset, DataLoader
+from pytorch_metric_learning import losses
 from torch.utils.tensorboard import SummaryWriter
 from torch import linalg as LA
 from .learner import Learner
@@ -36,33 +37,35 @@ def augmentation(img):
     if no augmentation is required,
     return input image without any transformation.
     """
-    # Random crop images and restore to original size
+
     original_size = img.size()
-    crop = transforms.Compose([transforms.RandomCrop(84), transforms.Resize(original_size[2])])
-
-    # Recolor image
-    recolor = transforms.Compose(
-        [transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4)]
+    transform = transforms.Compose(
+        [
+            transforms.RandomCrop(84),
+            transforms.Resize(original_size[2]),
+            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
+        ]
     )
-    return [TF.vflip(img), crop(img), recolor(img)]
+
+    return transform(img)
 
 
-def InfoNCE(keys, queries, t=0.1):
-    batch_size = keys.shape[0]
-    length = keys.shape[1]
+# def NTXent(keys, queries, t=0.1):
+#     breakpoint()
+#     a = time.time()
+#     batch_size = keys.shape[0]
+#     length = keys.shape[1]
+#     cosine_similarity = torch.nn.CosineSimilarity(dim=0, eps=1e-6)
 
-    pos = torch.exp(
-        torch.div(
-            torch.sum(
-                
-            )
-            torch.bmm(keys.view(batch_size, 1, length), queries.view(batch_size, length, 1)).view(
-                batch_size, 1
-            ),
-            t,
-        )
-    )
-    neg = torch.sum([torch.sum(torch.exp(torch.div(torch.mm(keys.view(batch_size, length), query.view()))))])
+#     pos = torch.exp(cosine_similarity(keys, queries) / t)
+#     neg = 0
+#     for i in range(batch_size):
+#         for j in range(batch_size):
+#             if i != j:
+#                 neg += torch.exp(cosine_similarity(keys[i], queries[j]) / t)
+#                 neg += torch.exp(cosine_similarity(keys[j], keys[i]) / t)
+#     print(time.time() - a)
+#     return -torch.log(pos / neg)
 
 
 class Meta(nn.Module):
@@ -201,7 +204,11 @@ class Meta(nn.Module):
         # linear_weights = [self.net.vars[-2].data.cpu().clone(), self.net.vars[-1].data.cpu().clone()]
         # self.net.vars[-2].data = torch.zeros_like(self.net.vars[-2].data)
         contrastive_model = deepcopy(self.net)
+        # Length of the whole model
+        model_len = len(contrastive_model.parameters())
         contrastive_model.pop()
+        # Length of encoder layers
+        encoder_len = len(contrastive_model.parameters())
         contrastive_model.append(
             [
                 ("linear", [128, 32 * self.linear_shape]),
@@ -215,22 +222,15 @@ class Meta(nn.Module):
         finetuned_parameters = [phi] * task_num
 
         # Calculate contrastive loss
-
-        # InfoNCE loss or NT-Xent loss
-
+        # NT-Xent loss
+        loss_fn = losses.SelfSupervisedLoss(losses.NTXentLoss())
         for i in range(task_num):
             # model with original data
             for k in range(update_step):
                 # Update parameter with support data
                 keys = contrastive_model(x_spt[i], finetuned_parameters[i], bn_training=True)
-                breakpoint()
-                queries = [
-                    contrastive_model(x, finetuned_parameters[i], bn_training=True)
-                    for x in x_spt_aug[i]
-                ]
-
-                loss = InfoNCE(keys, queries)
-
+                queries = contrastive_model(x_spt_aug[i], finetuned_parameters[i], bn_training=True)
+                loss = loss_fn(keys, queries)
                 grad = torch.autograd.grad(
                     loss,
                     finetuned_parameters[i],
@@ -244,6 +244,11 @@ class Meta(nn.Module):
                     )
                 )
         self.net.cuda()
+        # Assume the contrastive model has the longer length than the original model
+        for task in range(task_num):
+            finetuned_parameters[task] = finetuned_parameters[task][:model_len]
+            for i in range(encoder_len, model_len):
+                finetuned_parameters[task][i] = self.net.parameters()[i]
         return finetuned_parameters
 
     def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None, inner=False) -> float:

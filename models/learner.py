@@ -146,7 +146,7 @@ class Learner(nn.Module):
 
             elif name == "flatten":
                 # print(x.shape)
-                x = x.view(x.size(0), -1)
+                x = x.reshape(x.size(0), -1)
             elif name == "reshape":
                 # [b, 8] => [b, 2, 2, 2]
                 x = x.view(x.size(0), *param)
