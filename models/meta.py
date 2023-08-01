@@ -203,7 +203,7 @@ class Meta(nn.Module):
         # NT-Xent loss
         loss_fn = losses.SelfSupervisedLoss(losses.NTXentLoss())
         loss_list = []
-        # print("contrastive")
+        print("contrastive")
         for i in range(task_num):
             # model with original data
             for k in range(update_step):
@@ -214,7 +214,7 @@ class Meta(nn.Module):
                 grad = torch.autograd.grad(
                     loss,
                     finetuned_parameters[i],
-                    # create_graph=True,
+                    create_graph=True,
                     retain_graph=True,
                 )
                 finetuned_parameters[i] = list(
@@ -223,9 +223,9 @@ class Meta(nn.Module):
                         zip(grad, finetuned_parameters[i]),
                     )
                 )
-                # print(loss)
+                print(loss)
                 # avg_loss += loss.item()
-            loss_list.append(loss.item())
+                loss_list.append(loss)
         self.net.cuda()
         # Assume the contrastive model has the longer length than the original model
         for task in range(task_num):
@@ -233,7 +233,7 @@ class Meta(nn.Module):
             for i in range(encoder_len, model_len):
                 finetuned_parameters[task][i] = self.net.parameters()[i]
         # avg_loss /= task_num * update_step
-        avg_loss = np.mean(loss_list)
+        avg_loss = torch.mean(torch.stack(loss_list))
         return finetuned_parameters, avg_loss
 
     def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None, inner=False) -> float:
