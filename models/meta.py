@@ -32,11 +32,7 @@ class Rotate:
 
 
 def augmentation(img):
-    """
-    Return a [flipped, rotated] image.
-    if no augmentation is required,
-    return input image without any transformation.
-    """
+    """ """
 
     original_size = img.size()
     transform = transforms.Compose(
@@ -48,24 +44,6 @@ def augmentation(img):
     )
 
     return transform(img)
-
-
-# def NTXent(keys, queries, t=0.1):
-#     breakpoint()
-#     a = time.time()
-#     batch_size = keys.shape[0]
-#     length = keys.shape[1]
-#     cosine_similarity = torch.nn.CosineSimilarity(dim=0, eps=1e-6)
-
-#     pos = torch.exp(cosine_similarity(keys, queries) / t)
-#     neg = 0
-#     for i in range(batch_size):
-#         for j in range(batch_size):
-#             if i != j:
-#                 neg += torch.exp(cosine_similarity(keys[i], queries[j]) / t)
-#                 neg += torch.exp(cosine_similarity(keys[j], keys[i]) / t)
-#     print(time.time() - a)
-#     return -torch.log(pos / neg)
 
 
 class Meta(nn.Module):
@@ -179,7 +157,7 @@ class Meta(nn.Module):
     def chaser_loss(self, weight_1, weight_2, lam):
         return self.proximal_reg(weight_1, weight_2, lam)
 
-    def contrastive(self, x_spt) -> float:
+    def contrastive(self, x_spt, y_spt=None) -> float:
         """
         Used for first finetunning in 2-Tier Meta-Learning.
         :param x_spt:   [b, setsz, c_, h, w]
@@ -224,6 +202,8 @@ class Meta(nn.Module):
         # Calculate contrastive loss
         # NT-Xent loss
         loss_fn = losses.SelfSupervisedLoss(losses.NTXentLoss())
+        loss_list = []
+        # print("contrastive")
         for i in range(task_num):
             # model with original data
             for k in range(update_step):
@@ -234,8 +214,8 @@ class Meta(nn.Module):
                 grad = torch.autograd.grad(
                     loss,
                     finetuned_parameters[i],
-                    create_graph=(not self.first_order),
-                    retain_graph=(not self.first_order),
+                    # create_graph=True,
+                    retain_graph=True,
                 )
                 finetuned_parameters[i] = list(
                     map(
@@ -243,13 +223,18 @@ class Meta(nn.Module):
                         zip(grad, finetuned_parameters[i]),
                     )
                 )
+                # print(loss)
+                # avg_loss += loss.item()
+            loss_list.append(loss.item())
         self.net.cuda()
         # Assume the contrastive model has the longer length than the original model
         for task in range(task_num):
             finetuned_parameters[task] = finetuned_parameters[task][:model_len]
             for i in range(encoder_len, model_len):
                 finetuned_parameters[task][i] = self.net.parameters()[i]
-        return finetuned_parameters
+        # avg_loss /= task_num * update_step
+        avg_loss = np.mean(loss_list)
+        return finetuned_parameters, avg_loss
 
     def finetune_without_query(self, x_spt, y_spt, spt_aug=None, phi=None, inner=False) -> float:
         """
@@ -259,12 +244,6 @@ class Meta(nn.Module):
         :param phi:     list of meta parameters
         :return:
         """
-        # NOTE: The data augmentation is not implemented yet.
-        # NOTE:
-        assert (
-            self.need_aug  # Needs augmentation.
-            and torch.is_tensor(spt_aug)  # Augmented data are given.
-        ) or (not self.aug)
 
         if inner:
             update_lr = self.inner_update_lr
@@ -278,6 +257,7 @@ class Meta(nn.Module):
             phi = self.net.parameters()
 
         finetuned_parameters = [phi] * task_num
+        average_loss = 0
         # finetuned_parameter_aug = [phi] * task_num
 
         for i in range(task_num):
@@ -298,12 +278,14 @@ class Meta(nn.Module):
                         zip(grad, finetuned_parameters[i]),
                     )
                 )
+                average_loss += loss.item()
         # Get average point (prototype) of finetuned parameters
         # finetuned_parameters = torch.stack(finetuned_parameters, axis=0)
         # finetuned_parameter = torch.mean(finetuned_parameter, axis=0)
-        return finetuned_parameters
+        average_loss /= task_num * update_step
+        return finetuned_parameters, average_loss
 
-    def query(self, x_qry, y_qry, finetuned_parameters) -> float:
+    def query(self, x_qry, y_qry, finetuned_parameters, eval=True) -> float:
         # NOTE: The augmented data is not implemented yet.
         # NOTE: The argument finetuned_parameters is different from the 'phi'
         #       in other methods. It is a list of parameters, not a single
@@ -311,36 +293,14 @@ class Meta(nn.Module):
         num_corrects = 0
         task_num = len(x_qry)
         querysz = len(x_qry[0])
+        if self.aug and not eval:
+            x_qry = [augmentation(img) for img in x_qry]
         for i in range(task_num):
             # Calculate loss with query data and updated parameter
             logits_q = self.net(x_qry[i], finetuned_parameters[i], bn_training=True)
             _task_loss = F.cross_entropy(logits_q, y_qry[i])
             if not self.bmaml:
                 loss_q += _task_loss  # Sum of losses of all tasks
-
-            # # iMAML proximal regularizer
-            # Impossible without w_0 given.
-            # if (self.prox_task == 0 or self.prox_task == 2) and self.prox_lam > 0:
-            #     prox_reg = self.proximal_reg(w_0, finetuned_parameters[i], self.prox_lam)
-            #     loss_q += prox_reg
-
-            # # bMAML chaser loss
-            # if (self.chaser_task == 0 or self.chaser_task == 2) and self.chaser_lam > 0:
-            #     chaser = finetuned_parameters[i]
-            #     grad = torch.autograd.grad(
-            #         _task_loss,
-            #         finetuned_parameters[i],
-            #         create_graph=True,
-            #         retain_graph=True,
-            #     )
-            #     leader = list(
-            #         map(
-            #             lambda p: p[1] - self.chaser_lr * p[0],
-            #             zip(grad, finetuned_parameters[i]),
-            #         )
-            #     )
-            #     chaser_reg = self.chaser_loss(chaser, leader, self.chaser_lam)
-            #     loss_q += chaser_reg
 
             with torch.no_grad():
                 pred_q = F.softmax(logits_q, dim=1).argmax(dim=1)
@@ -349,19 +309,6 @@ class Meta(nn.Module):
         loss_q = torch.div(loss_q, task_num)
         acc = num_corrects / (querysz * task_num)  # Not directly used in the training.
         return loss_q, acc
-        # Backwards need to be done in the caller function.
-        # # optimize theta parameters
-
-        # self.meta_optim.zero_grad()
-
-        # if self.bmaml:
-        #     loss_q.requires_grad = True
-        # loss_q.backward()
-
-        # self.meta_optim.step()
-        # acc = num_corrects / (querysz * task_num)
-
-        # return acc
 
     def forward(self, x_spt, y_spt, x_qry, y_qry, spt_aug=None, qry_aug=None, phi=None) -> float:
         """

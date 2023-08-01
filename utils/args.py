@@ -22,6 +22,7 @@ def get_args_parser():
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--choose_train", action="store_true")
     parser.add_argument("--two_tier", action="store_true")
+    parser.add_argument("--train_method", default="supervised", type=str)  # supervised, contrastive
 
     # Dataset parameters
     parser.add_argument(
@@ -534,7 +535,7 @@ def get_args_parser():
         "--meta_lr",
         type=float,
         help="meta-level outer learning rate",
-        default=1e-3,
+        default=0.01,
     )
     parser.add_argument(
         "--update_lr",
