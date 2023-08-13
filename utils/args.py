@@ -4,6 +4,8 @@ import numpy as np
 
 def get_args_parser():
     parser = argparse.ArgumentParser("Few-shot learning script", add_help=False)
+    parser.add_argument("name", type=str)
+    parser.add_argument("configs", nargs="*")
     # General
     parser.add_argument("--batch-size", default=1, type=int)
     parser.add_argument("--num_classes", default=1000, type=int)
@@ -14,10 +16,8 @@ def get_args_parser():
         help="Whether to use 16-bit float precision instead of 32-bit",
     )
     parser.set_defaults(fp16=True)
-    parser.add_argument(
-        "--output_dir", default="outputs/tmp", help="path where to save, empty for no saving"
-    )
-    parser.add_argument("--plot_dir", default="images/tmp", help="path where to save pictures")
+    parser.add_argument("--output_dir", default="outputs/", help="path where to save")
+    parser.add_argument("--plot_dir", default="images/", help="path where to save pictures")
     parser.add_argument("--device", default="cuda", help="cuda:gpu_id for single GPU training")
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--choose_train", action="store_true")
@@ -27,7 +27,8 @@ def get_args_parser():
     # Dataset parameters
     parser.add_argument(
         "--data-path",
-        default="/datasets01/imagenet_full_size/061417/",
+        # default="/datasets01/imagenet_full_size/061417/",
+        default="/home/bjk/hdd1/records/",
         type=str,
         help="dataset path",
     )
@@ -40,7 +41,7 @@ def get_args_parser():
     parser.add_argument(
         "--dataset",
         choices=["cifar_fs_elite", "cifar_fs", "mini_imagenet", "meta_dataset"],
-        default="cifar_fs",
+        default="meta_dataset",
         help="Which few-shot dataset.",
     )
 
@@ -136,7 +137,7 @@ def get_args_parser():
     parser.add_argument(
         "--num_support",
         type=int,
-        default=None,
+        default=1,
         help="Set it if you want a fixed # of support samples per class",
     )
     parser.add_argument(
@@ -216,9 +217,10 @@ def get_args_parser():
     )
 
     # Model params
-    parser.add_argument(
-        "--arch", default="dino_base_patch16_224", type=str, help="Architecture of the backbone."
-    )
+    # parser.add_argument(
+    #     "--arch", default="dino_base_patch16_224", type=str, help="Architecture of the backbone."
+    # )
+    parser.add_argument("--arch", default="maml", type=str, help="Architecture of the backbone.")
     parser.add_argument("--patch_size", default=16, type=int, help="Patch resolution of the model.")
     parser.add_argument(
         "--pretrained_weights", default="", type=str, help="Path to pretrained weights to evaluate."
@@ -581,7 +583,7 @@ def get_args_parser():
         help="update steps for finetunning",
         default=10,
     )
-    parser.add_argument("--logdir", type=str, help="log directory for tensorboard", default="")
+    parser.add_argument("--log_dir", type=str, help="log directory for tensorboard", default="log/")
     # Augmentation
     parser.add_argument(
         "--traditional_augmentation",

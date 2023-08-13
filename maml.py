@@ -8,6 +8,7 @@ import torch.backends.cudnn as cudnn
 import json
 import umap
 import copy
+import shlex
 import matplotlib.pyplot as plt
 
 from datetime import timedelta
@@ -33,6 +34,7 @@ class Trainer(object):
         args.distributed = True
         self.device = torch.device(args.device)
         self.seed = args.seed + utils.get_rank()
+        self.seed = random.choice(range(self.seed, self.seed + 10))
         args.seed = self.seed
         torch.manual_seed(self.seed)
         np.random.seed(self.seed)
@@ -40,16 +42,19 @@ class Trainer(object):
         cudnn.benchmark = True
 
         self.plot_dir = Path(args.plot_dir)
+        self.log_dir = Path(args.log_dir)
         self.output_dir = Path(args.output_dir)
         if utils.is_main_process():
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            with (self.output_dir / "log.txt").open("a") as f:
-                f.write(" ".join(sys.argv) + "\n")
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            with (self.log_dir / "log.txt").open("a") as f:
+                if not args.eval:
+                    f.write(" ".join(sys.argv) + "\n")
         self.model_description_json = {}
-        self.writer = SummaryWriter(log_dir=str(self.output_dir))
+        self.writer = SummaryWriter(log_dir=str(self.log_dir))
 
         if utils.is_main_process():
             self.plot_dir.mkdir(parents=True, exist_ok=True)
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Data loaders
         self.num_tasks = utils.get_world_size()
@@ -58,6 +63,10 @@ class Trainer(object):
             self.data_loader_val,
             self.outer_support_set_val,
         ) = get_loaders(args, self.num_tasks, global_rank)
+        # (_, _), (
+        #     self.data_loader_test,
+        #     self.outer_support_set_test,
+        # ) = get_loaders(args, self.num_tasks, global_rank)
         # Mixup regularization (by default OFF)
         self.mixup_fn = None
         mixup_active = args.mixup > 0 or args.cutmix > 0.0 or args.cutmix_minmax is not None
@@ -210,9 +219,13 @@ class Trainer(object):
         )
         inner_update_fn = meta_learner.finetune_without_query
 
+        val_losses = []
+        val_accs = []
+
         for epoch in range(args.start_epoch, args.epochs):
             # Iterate for minimum length of the outer-support-set
             num_episodes = min([len(loader) for loader in self.outer_support_set_train.values()])
+            print(epoch, num_episodes)
             for episode in range(num_episodes):
                 param_log = defaultdict(list)
                 param_log["finetuned_meta_parameters"] = {}
@@ -254,8 +267,6 @@ class Trainer(object):
                     else:
                         batch = next(iter(outer_support_loader))
                         batch = to_device(batch, self.device)
-                        # TODO: number of tasks in the outer-support-set IS ALREADY 1.
-                        #       Check why it is the case.
                         outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
                         finetuned_meta_parameters, outer_loss = outer_update_fn(
                             outer_spt_xs, outer_spt_ys
@@ -309,12 +320,6 @@ class Trainer(object):
 
                     learner.meta_optim.step()
                     params_per_source[train_source] = learner.net.parameters()
-                    # grad_per_source[train_source] = torch.autograd.grad(
-                    #     loss_per_source,
-                    #     finetuned_meta_parameter,
-                    #     create_graph=False,
-                    #     retain_graph=False,
-                    # )
 
                     loss.append(loss_per_source)
                     acc[train_source] = acc_per_source
@@ -377,9 +382,16 @@ class Trainer(object):
                         print("{} acc: {:.2f}%".format(source, acc_per_source * 100))
                     print("Average acc: {:.2f}%".format(average_accuarcy * 100))
                 if episode_over_total_epochs % 100 == 0:
-                    self.evaluate(meta_learner, episode_over_total_epochs)
+                    val_acc, val_loss = self.evaluate(meta_learner, episode_over_total_epochs)
+                    if not val_accs or val_acc > max(val_accs):
+                        torch.save(
+                            meta_learner.state_dict(),
+                            self.output_dir / "best_model.pth",
+                        )
+
+                    val_accs.append(val_acc)
                     # Plot parameters
-                    self.plot_parameters(param_log, episode_over_total_epochs)
+                    # self.plot_parameters(param_log, episode_over_total_epochs)
 
     def evaluate(self, meta_learner, epoch):
         print("Evaluate")
@@ -436,21 +448,24 @@ class Trainer(object):
                 qry_xs, qry_ys, finetuned_parameters, eval=True
             )
             # val_acc_per_source /= len(val_loader) * len(spt_xs)
-            self.writer.add_scalar("Loss/val/{}".format(val_source), val_loss_per_source, epoch)
-            self.writer.add_scalar("Outer/val/{}".format(val_source), outer_loss, epoch)
-            self.writer.add_scalar("Inner/val/{}".format(val_source), inner_loss, epoch)
-            self.writer.add_scalar("Acc/val/{}".format(val_source), val_acc_per_source, epoch)
+            if not args.eval:
+                self.writer.add_scalar("Loss/val/{}".format(val_source), val_loss_per_source, epoch)
+                self.writer.add_scalar("Outer/val/{}".format(val_source), outer_loss, epoch)
+                self.writer.add_scalar("Inner/val/{}".format(val_source), inner_loss, epoch)
+                self.writer.add_scalar("Acc/val/{}".format(val_source), val_acc_per_source, epoch)
             print("{} acc: {:.2f}%".format(val_source, val_acc_per_source * 100))
             val_acc += val_acc_per_source
             val_loss += val_loss_per_source
         val_acc /= len(self.data_loader_val)
         val_loss /= len(self.data_loader_val)
-        self.writer.add_scalar("Loss/val/average", val_loss, epoch)
-        self.writer.add_scalar("Outer/val/average", outer_average_loss, epoch)
-        self.writer.add_scalar("Inner/val/average", inner_average_loss, epoch)
-        self.writer.add_scalar("Acc/val/average", val_acc, epoch)
+        if not args.eval:
+            self.writer.add_scalar("Loss/val/average", val_loss, epoch)
+            self.writer.add_scalar("Outer/val/average", outer_average_loss, epoch)
+            self.writer.add_scalar("Inner/val/average", inner_average_loss, epoch)
+            self.writer.add_scalar("Acc/val/average", val_acc, epoch)
         print("Average val acc: {}%".format(val_acc * 100))
         print("Average val loss: {}".format(val_loss))
+        return val_acc, val_loss
 
     def save_parameters(self, params: list, epoch: int, episode: int):
         pass
@@ -460,10 +475,7 @@ class Trainer(object):
         #       The code will be modified to plot only the requested parameters (The last epoch).
         print("Plotting parameters T-SNE")
         colors = ["b", "g", "r", "c", "m", "y", "blueviolet", "magenta", "peru", "lime"]
-        if mode == "tsne":
-            model = TSNE(n_components=2, random_state=1004, perplexity=5)
-        elif mode == "umap":
-            model = umap.UMAP(random_state=1004)
+        model = TSNE(n_components=3, random_state=1004, perplexity=5)
         # Convert parameters to a flat list
         param_list = []
         color_range = {}
@@ -483,85 +495,77 @@ class Trainer(object):
                     color_dict[source] = color_dict.get(source, colors[len(color_dict)])
 
         param_list = np.array(param_list)
+
+        model = TSNE(n_components=3, random_state=1004, perplexity=5)
         embedding = model.fit_transform(param_list)
-
-        # embedding = defaultdict(list)
-
+        x, y, z = zip(*embedding)
+        fig = plt.figure()
+        ax = fig.add_subplot(projection="3d")
         for i, (key, value) in enumerate(params.items()):
             if type(value) == list:
-                xs, ys = embedding[color_range[key], 0], embedding[color_range[key], 1]
-                plt.scatter(xs, ys, c=color_dict[key], label=key)
+                xs, ys, zs = x[color_range[key]], y[color_range[key]], z[color_range[key]]
+                ax.scatter(xs, ys, zs, c=color_dict[key], label=key)
             elif type(value) == dict:
                 for j, (source, source_value) in enumerate(value.items()):
-                    xs, ys = (
-                        embedding[meta_color_range[source], 0],
-                        embedding[meta_color_range[source], 1],
+                    xs, ys, zs = (
+                        x[meta_color_range[source]],
+                        y[meta_color_range[source]],
+                        z[meta_color_range[source]],
                     )
-                    plt.scatter(
+                    ax.scatter(
                         xs,
                         ys,
+                        zs,
                         c=color_dict[source],
                         label=source,
                         marker="x",
                         linewidth=1,
                         edgecolor="k",
                     )
+
         plt.legend(
             bbox_to_anchor=(1.04, 1),
             borderaxespad=0,
         )
         plt.savefig(
-            "{}/{}_{}{}.png".format(
-                args.plot_dir, timestep, mode, ("_one" if args.one_tier else "")
-            ),
+            "{}/{}.png".format(args.plot_dir, timestep),
             dpi=400,
             bbox_inches="tight",
         )
         plt.clf()
-        # # Test 3d
-        # tsne = TSNE(n_components=3, random_state=1004)
-        # embedding = tsne.fit_transform(np.array(params))
-        # fig = plt.figure()
-        # ax = fig.add_subplot(projection="3d")
-        # for i, source in enumerate(tsne_ranges.keys()):
-        #     xs = embedding[tsne_ranges[source], 0]
-        #     ys = embedding[tsne_ranges[source], 1]
-        #     zs = embedding[tsne_ranges[source], 2]
-        #     ax.scatter(xs, ys, zs, c=colors[i], label=source)
-        # ax.scatter(embedding[-1, 0], embedding[-1, 1], c="k", label="Meta-Parameter")
-        # plt.legend()
-        # plt.show()
-        # plt.savefig(
-        #     "{}/{}_3d.png".format(args.plot_dir, epoch * len(train_loader) + episode), dpi=400
-        # )
-        # plt.clf()
-        # del tsne
-        # embedding = umap.UMAP(n_components=3, random_state=1004).fit_transform(np.array(params))
-        # fig = plt.figure()
-        # ax = fig.add_subplot(projection="3d")
-        # for i, source in enumerate(tsne_ranges.keys()):
-        #     xs = embedding[tsne_ranges[source], 0]
-        #     ys = embedding[tsne_ranges[source], 1]
-        #     zs = embedding[tsne_ranges[source], 2]
-        #     ax.scatter(xs, ys, zs, c=colors[i], label=source)
-        # ax.scatter(embedding[-1, 0], embedding[-1, 1], c="k", label="Meta-Parameter")
-        # plt.legend()
-        # plt.show()
-        # plt.savefig(
-        #     "{}/{}_3d_umap.png".format(args.plot_dir, epoch * len(train_loader) + episode), dpi=400
-        # )
-        # plt.clf()
 
 
 if __name__ == "__main__":
     parser = get_args_parser()
     args = parser.parse_args()
+    args.output_dir += args.name
+    args.plot_dir += args.name
+    args.log_dir += args.name
+    if args.eval:
+        with open(Path(args.log_dir) / "log.txt", "r") as fp:
+            shline = fp.readlines()[-1]
+            shline = " ".join(shlex.split(shline)[1:])
+            args = parser.parse_args(shlex.split(shline))
+            args.output_dir += args.name
+            args.plot_dir += args.name
+            args.log_dir += args.name
+            args.eval = True
     if args.two_tier:
         args.choose_train = True
 
     trainer = Trainer(args)
     # trainer.train_separately(args)
-    if args.two_tier:
-        trainer.train_2tier()
+    if args.eval:
+        # Load model
+        print("Load model")
+        model = Meta(args, trainer.model_config_no_classifier)
+        model.net.append(trainer.linear_config)
+        model.to(trainer.device)
+        model.load_state_dict(torch.load(trainer.output_dir / "best_model.pth"))
+        model.eval()
+        trainer.evaluate(model, 0)
     else:
-        trainer.train()
+        if args.two_tier:
+            trainer.train_2tier()
+        else:
+            trainer.train()

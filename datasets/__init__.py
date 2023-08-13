@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from .samplers import RASampler
 from .episodic_dataset import EpisodeDataset, EpisodeJSONDataset
 from .meta_val_dataset import MetaValDataset
-from .meta_h5_dataset import FullMetaDatasetH5
+from .meta_h5_dataset import FullMetaDatasetH5, ContrastiveMetaH5
 from .meta_dataset.utils import Split
 
 
@@ -22,9 +22,23 @@ def get_sets(args):
     elif args.dataset == "meta_dataset":
         if args.eval:
             trainSet = valSet = None
-            testSet = FullMetaDatasetH5(args, Split.TEST)
+            trainOuterSupportSet = valOuterSupportSet = None
             if args.two_tier:
-                testOuterSupportSet = FullMetaDatasetH5(args, Split.TEST)
+                testOuterSupportSet = {}
+            if args.choose_train:
+                sources = args.test_sources
+                testSet = {}
+                for source in sources:
+                    args.test_sources = [source]
+                    testSet[source] = FullMetaDatasetH5(args, Split.TEST)
+                    if args.two_tier:
+                        testOuterSupportSet[source] = FullMetaDatasetH5(args, Split.TEST, True)
+                args.test_sources = sources
+            else:
+                testSet = {"combined": FullMetaDatasetH5(args, Split.TEST)}
+                if args.two_tier:
+                    testOuterSupportSet = {"combined": FullMetaDatasetH5(args, Split.TEST, True)}
+
         else:
             # Not checked when multiprocess.
             trainSet = {}
@@ -36,31 +50,33 @@ def get_sets(args):
                     args.base_sources = [source]
                     trainSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
                     if args.two_tier:
-                        trainOuterSupportSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
+                        trainOuterSupportSet[source] = ContrastiveMetaH5(args, Split.TRAIN)
                 args.base_sources = sources
             else:
                 trainSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
                 if args.two_tier:
-                    trainOuterSupportSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
+                    trainOuterSupportSet["combined"] = ContrastiveMetaH5(args, Split.TRAIN)
             valSet = {}
             if args.two_tier:
                 valOuterSupportSet = {}
             for source in args.val_sources:
-                valSet[source] = MetaValDataset(
-                    os.path.join(
-                        args.data_path, source, f"val_ep{args.nValEpisode}_img{args.image_size}.h5"
-                    ),
-                    num_episodes=args.nValEpisode,
-                )
+                # valSet[source] = MetaValDataset(
+                #     os.path.join(
+                #         args.data_path, source, f"val_ep{args.nValEpisode}_img{args.image_size}.h5"
+                #     ),
+                #     num_episodes=args.nValEpisode,
+                # )
+                valSet[source] = FullMetaDatasetH5(args, Split.VALID)
                 if args.two_tier:
-                    valOuterSupportSet[source] = MetaValDataset(
-                        os.path.join(
-                            args.data_path,
-                            source,
-                            f"val_ep{args.nValEpisode}_img{args.image_size}.h5",
-                        ),
-                        num_episodes=args.nValEpisode,
-                    )
+                    # valOuterSupportSet[source] = MetaValDataset(
+                    #     os.path.join(
+                    #         args.data_path,
+                    #         source,
+                    #         f"val_ep{args.nValEpisode}_img{args.image_size}.h5",
+                    #     ),
+                    #     num_episodes=args.nValEpisode,
+                    # )
+                    valOuterSupportSet[source] = ContrastiveMetaH5(args, Split.VALID)
             testSet = None
             if args.two_tier:
                 testOuterSupportSet = None
@@ -137,9 +153,11 @@ def task_collate(samples):
     return (support_images, support_labels, query_images, query_labels)
 
 
-def get_loaders(args, num_tasks, global_rank):
+def get_loaders(args, num_tasks, global_rank, eval=None):
+    if eval is None:
+        eval = args.eval
     # datasets
-    if args.eval:
+    if eval:
         _, _, dataset_vals, _, _, outer_support_set_vals = get_sets(args)
     else:
         (
@@ -194,7 +212,7 @@ def get_loaders(args, num_tasks, global_rank):
                         outer_support_set_vals[source],
                         num_replicas=num_tasks,
                         rank=global_rank,
-                        shuffle=False,
+                        shuffle=True,
                     )
             else:
                 sampler_val = torch.utils.data.SequentialSampler(dataset_val)
@@ -214,7 +232,7 @@ def get_loaders(args, num_tasks, global_rank):
 
         data_loader_val[source] = torch.utils.data.DataLoader(
             dataset_val,
-            sampler=sampler_val,
+            # sampler=sampler_val,
             # batch_size=args.task_num,  # Number of tasks when evaluating need to be checked again.
             batch_size=1,
             num_workers=3,  # more workers can take too much CPU
@@ -222,6 +240,7 @@ def get_loaders(args, num_tasks, global_rank):
             drop_last=False,
             worker_init_fn=worker_init_fn,
             generator=generator,
+            shuffle=True,
         )
         if args.two_tier:
             outer_support_data_loader_val[source] = torch.utils.data.DataLoader(
@@ -239,8 +258,8 @@ def get_loaders(args, num_tasks, global_rank):
     if "single" in dataset_vals:
         data_loader_val = data_loader_val["single"]
 
-    if args.eval:
-        return None, data_loader_val
+    if eval:
+        return (None, None), (data_loader_val, outer_support_data_loader_val)
 
     # Train loader
     data_loader_train = {}
@@ -309,7 +328,7 @@ def get_loaders(args, num_tasks, global_rank):
                 batch_size=1,  # One finetuned_meta_parameter per source
                 num_workers=args.num_workers,
                 pin_memory=args.pin_mem,
-                drop_last=True,
+                # drop_last=True,
                 worker_init_fn=worker_init_fn,
                 generator=generator,
                 collate_fn=task_collate,

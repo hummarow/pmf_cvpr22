@@ -3,7 +3,7 @@ import numpy as np
 from numpy.random import RandomState
 from . import dataset_spec as dataset_spec_lib
 from . import imagenet_specification
-from . config import EpisodeDescriptionConfig
+from .config import EpisodeDescriptionConfig
 from .dataset_spec import HierarchicalDatasetSpecification as HDS
 from .dataset_spec import BiLevelDatasetSpecification as BDS
 from .dataset_spec import DatasetSpecification as DS
@@ -22,9 +22,7 @@ from .utils import Split
 MAX_SPANNING_LEAVES_ELIGIBLE = 392
 
 
-def sample_num_ways_uniformly(num_classes: int,
-                              min_ways: int,
-                              max_ways: int):
+def sample_num_ways_uniformly(num_classes: int, min_ways: int, max_ways: int):
     """Samples a number of ways for an episode uniformly and at random.
 
     The support of the distribution is [min_ways, num_classes], or
@@ -42,8 +40,7 @@ def sample_num_ways_uniformly(num_classes: int,
     return np.random.randint(low=min_ways, high=max_ways + 1)
 
 
-def sample_class_ids_uniformly(num_ways: int,
-                               rel_classes: List[int]):
+def sample_class_ids_uniformly(num_ways: int, rel_classes: List[int]):
     """Samples the (relative) class IDs for the episode.
 
     Args:
@@ -56,9 +53,9 @@ def sample_class_ids_uniformly(num_ways: int,
     return np.random.choice(rel_classes, num_ways, replace=False)
 
 
-def compute_num_query(images_per_class: np.ndarray,
-                      max_num_query: int,
-                      num_support: Union[int, Tuple[int, int]]):
+def compute_num_query(
+    images_per_class: np.ndarray, max_num_query: int, num_support: Union[int, Tuple[int, int]]
+):
     """Computes the number of query examples per class in the episode.
 
     Query sets are balanced, i.e., contain the same number of examples for each
@@ -82,21 +79,22 @@ def compute_num_query(images_per_class: np.ndarray,
     """
     if not num_support:
         if images_per_class.min() < 2:
-            raise ValueError('Expected at least 2 images per class.')
+            raise ValueError("Expected at least 2 images per class.")
         return np.minimum(max_num_query, (images_per_class // 2).min())
     elif isinstance(num_support, int):
         max_support = num_support
-    else: # (lb, ub)
+    else:  # (lb, ub)
         _, max_support = num_support
     if (images_per_class - max_support).min() < 1:
-        raise ValueError(
-            'Expected at least {} images per class'.format(max_support + 1))
+        raise ValueError("Expected at least {} images per class".format(max_support + 1))
     return np.minimum(max_num_query, images_per_class.min() - max_support)
 
 
-def sample_support_set_size(num_remaining_per_class: np.ndarray,
-                            max_support_size_contrib_per_class: int,
-                            max_support_set_size: int):
+def sample_support_set_size(
+    num_remaining_per_class: np.ndarray,
+    max_support_size_contrib_per_class: int,
+    max_support_set_size: int,
+):
     """Samples the size of the support set in the episode.
 
     That number is such that:
@@ -119,25 +117,30 @@ def sample_support_set_size(num_remaining_per_class: np.ndarray,
       support_set_size: int, size of the support set in the episode.
     """
     if max_support_set_size < len(num_remaining_per_class):
-        raise ValueError('max_support_set_size is too small to have at least one '
-                         'support example per class.')
+        raise ValueError(
+            "max_support_set_size is too small to have at least one " "support example per class."
+        )
     beta = np.random.uniform()
-    support_size_contributions = np.minimum(max_support_size_contrib_per_class,
-                                            num_remaining_per_class)
+    support_size_contributions = np.minimum(
+        max_support_size_contrib_per_class, num_remaining_per_class
+    )
     return np.minimum(
         # Taking the floor and adding one is equivalent to sampling beta uniformly
         # in the (0, 1] interval and taking the ceiling of its product with
         # `support_size_contributions`. This ensures that the support set size is
         # at least as big as the number of ways.
         np.floor(beta * support_size_contributions + 1).sum(),
-        max_support_set_size)
+        max_support_set_size,
+    )
 
 
-def sample_num_support_per_class(images_per_class: np.ndarray,
-                                 num_remaining_per_class: np.ndarray,
-                                 support_set_size: int,
-                                 min_log_weight: float,
-                                 max_log_weight: float):
+def sample_num_support_per_class(
+    images_per_class: np.ndarray,
+    num_remaining_per_class: np.ndarray,
+    support_set_size: int,
+    min_log_weight: float,
+    max_log_weight: float,
+):
     """Samples the number of support examples per class.
 
     At a high level, we wish the composition to loosely match class frequencies.
@@ -161,22 +164,26 @@ def sample_num_support_per_class(images_per_class: np.ndarray,
       num_support_per_class: np.array, number of support examples for each class.
     """
     if support_set_size < len(num_remaining_per_class):  # noqa: E111
-        raise ValueError('Requesting smaller support set than the number of ways.')
+        raise ValueError("Requesting smaller support set than the number of ways.")
     if np.min(num_remaining_per_class) < 1:  # noqa: E111
-        raise ValueError('Some classes have no remaining examples.')
+        raise ValueError("Some classes have no remaining examples.")
 
     # Remaining number of support examples to sample after we guarantee one
     # support example per class.
     remaining_support_set_size = support_set_size - len(num_remaining_per_class)  # noqa: E111
 
     unnormalized_proportions = images_per_class * np.exp(  # noqa: E111
-        np.random.uniform(min_log_weight, max_log_weight, size=images_per_class.shape))
+        np.random.uniform(min_log_weight, max_log_weight, size=images_per_class.shape)
+    )
     support_set_proportions = (  # noqa: E111
-        unnormalized_proportions / unnormalized_proportions.sum())
+        unnormalized_proportions / unnormalized_proportions.sum()
+    )
 
     # This guarantees that there is at least one support example per class.
-    num_desired_per_class = np.floor(  # noqa: E111
-        support_set_proportions * remaining_support_set_size).astype('int32') + 1
+    num_desired_per_class = (
+        np.floor(support_set_proportions * remaining_support_set_size).astype("int32")  # noqa: E111
+        + 1
+    )
 
     return np.minimum(num_desired_per_class, num_remaining_per_class)  # noqa: E111
 
@@ -189,14 +196,17 @@ class EpisodeDescriptionSampler(object):
     support and query examples for each class ID.
     """
 
-    def __init__(self,  # noqa: E111
-                 dataset_spec: Union[HDS, BDS, DS],
-                 split: Split,
-                 episode_descr_config: EpisodeDescriptionConfig,
-                 use_dag_hierarchy: bool = False,
-                 use_bilevel_hierarchy: bool = False,
-                 use_all_classes: bool = False,
-                 ignore_hierarchy_probability: float = 0.0):
+    def __init__(
+        self,  # noqa: E111
+        dataset_spec: Union[HDS, BDS, DS],
+        split: Split,
+        episode_descr_config: EpisodeDescriptionConfig,
+        use_dag_hierarchy: bool = False,
+        use_bilevel_hierarchy: bool = False,
+        use_all_classes: bool = False,
+        ignore_hierarchy_probability: float = 0.0,
+        contrastive=False,
+    ):
         """Initializes an EpisodeDescriptionSampler.episode_config.
 
         Args:
@@ -227,6 +237,7 @@ class EpisodeDescriptionSampler(object):
         self.use_bilevel_hierarchy = use_bilevel_hierarchy
         self.ignore_hierarchy_probability = ignore_hierarchy_probability
         self.use_all_classes = use_all_classes
+        self.contrastive = contrastive
         self.num_ways = episode_descr_config.num_ways
         self.num_support = episode_descr_config.num_support
         self.num_query = episode_descr_config.num_query
@@ -234,7 +245,9 @@ class EpisodeDescriptionSampler(object):
         self.max_ways_upper_bound = episode_descr_config.max_ways_upper_bound
         self.max_num_query = episode_descr_config.max_num_query
         self.max_support_set_size = episode_descr_config.max_support_set_size
-        self.max_support_size_contrib_per_class = episode_descr_config.max_support_size_contrib_per_class
+        self.max_support_size_contrib_per_class = (
+            episode_descr_config.max_support_size_contrib_per_class
+        )
         self.min_log_weight = episode_descr_config.min_log_weight
         self.max_log_weight = episode_descr_config.max_log_weight
         self.min_examples_in_class = episode_descr_config.min_examples_in_class
@@ -255,29 +268,40 @@ class EpisodeDescriptionSampler(object):
 
         if skipped_classes:
             print(  # noqa: E111
-                  'Skipping the following classes, which do not have at least '
-                  '%d examples', self.min_examples_in_class)
+                "Skipping the following classes, which do not have at least " "%d examples",
+                self.min_examples_in_class,
+            )
         for class_id, n_examples in skipped_classes:
-            print('%s (ID=%d, %d examples)',  # noqa: E111
-                  dataset_spec.class_names[class_id], class_id, n_examples)
+            print(
+                "%s (ID=%d, %d examples)",  # noqa: E111
+                dataset_spec.class_names[class_id],
+                class_id,
+                n_examples,
+            )
 
         if self.min_ways and self.num_filtered_classes < self.min_ways:
             raise ValueError(  # noqa: E111
                 '"min_ways" is set to {}, but split {} of dataset {} only has {} '
-                'classes with at least {} examples ({} total), so it is not possible '
-                'to create an episode for it. This may have resulted from applying a '
-                'restriction on this split of this dataset by specifying '
-                'benchmark.restrict_classes or benchmark.min_examples_in_class.'
-                .format(self.min_ways, split, dataset_spec.name,
-                        self.num_filtered_classes, self.min_examples_in_class,
-                        self.num_classes))
+                "classes with at least {} examples ({} total), so it is not possible "
+                "to create an episode for it. This may have resulted from applying a "
+                "restriction on this split of this dataset by specifying "
+                "benchmark.restrict_classes or benchmark.min_examples_in_class.".format(
+                    self.min_ways,
+                    split,
+                    dataset_spec.name,
+                    self.num_filtered_classes,
+                    self.min_examples_in_class,
+                    self.num_classes,
+                )
+            )
 
         if self.use_all_classes:
             if self.num_classes != self.num_filtered_classes:  # noqa: E111
-                raise ValueError('"use_all_classes" is not compatible with a value of '
-                                 '"min_examples_in_class" ({}) that results in some '
-                                 'classes being excluded.'.format(
-                                   self.min_examples_in_class))
+                raise ValueError(
+                    '"use_all_classes" is not compatible with a value of '
+                    '"min_examples_in_class" ({}) that results in some '
+                    "classes being excluded.".format(self.min_examples_in_class)
+                )
             self.num_ways = self.num_classes  # noqa: E111
 
         # Maybe overwrite use_dag_hierarchy or use_bilevel_hierarchy if requested.
@@ -288,44 +312,50 @@ class EpisodeDescriptionSampler(object):
 
         # For Omniglot.
         if self.use_bilevel_hierarchy:
-            print('=======================')
-            print('Using bilevel hierarchy !')
-            print('=======================')
+            print("=======================")
+            print("Using bilevel hierarchy !")
+            print("=======================")
             if self.num_ways:  # noqa: E111
-                raise ValueError('"use_bilevel_hierarchy" is incompatible with '
-                                 '"num_ways".')
+                raise ValueError('"use_bilevel_hierarchy" is incompatible with ' '"num_ways".')
             if self.min_examples_in_class > 0:  # noqa: E111
-                raise ValueError('"use_bilevel_hierarchy" is incompatible with '
-                                 '"min_examples_in_class".')
+                raise ValueError(
+                    '"use_bilevel_hierarchy" is incompatible with ' '"min_examples_in_class".'
+                )
             if self.use_dag_hierarchy:  # noqa: E111
-                raise ValueError('"use_bilevel_hierarchy" is incompatible with '
-                                 '"use_dag_hierarchy".')
+                raise ValueError(
+                    '"use_bilevel_hierarchy" is incompatible with ' '"use_dag_hierarchy".'
+                )
 
-            if not isinstance(dataset_spec,  # noqa: E111
-                              dataset_spec_lib.BiLevelDatasetSpecification):
-                raise ValueError('Only applicable to datasets with a bi-level '
-                                 'dataset specification.')
+            if not isinstance(
+                dataset_spec, dataset_spec_lib.BiLevelDatasetSpecification  # noqa: E111
+            ):
+                raise ValueError(
+                    "Only applicable to datasets with a bi-level " "dataset specification."
+                )
             # The id's of the superclasses of the split (a contiguous range of ints).
             all_superclasses = dataset_spec.get_superclasses(self.split)  # noqa: E111
             self.superclass_set = []  # noqa: E111
             for i in all_superclasses:  # noqa: E111
                 if self.dataset_spec.classes_per_superclass[i] < self.min_ways:
                     raise ValueError(  # noqa: E111
-                        'Superclass: %d has num_classes=%d < min_ways=%d.' %
-                        (i, self.dataset_spec.classes_per_superclass[i], self.min_ways))
+                        "Superclass: %d has num_classes=%d < min_ways=%d."
+                        % (i, self.dataset_spec.classes_per_superclass[i], self.min_ways)
+                    )
                 self.superclass_set.append(i)
         # For ImageNet.
         elif self.use_dag_hierarchy:
             if self.num_ways:  # noqa: E111
                 raise ValueError('"use_dag_hierarchy" is incompatible with "num_ways".')
 
-            if not isinstance(dataset_spec,  # noqa: E111
-                              dataset_spec_lib.HierarchicalDatasetSpecification):
-                raise ValueError('Only applicable to datasets with a hierarchical '
-                                 'dataset specification.')
-            print('=======================')
-            print('Using DAG hierarchy !')
-            print('=======================')
+            if not isinstance(
+                dataset_spec, dataset_spec_lib.HierarchicalDatasetSpecification  # noqa: E111
+            ):
+                raise ValueError(
+                    "Only applicable to datasets with a hierarchical " "dataset specification."
+                )
+            print("=======================")
+            print("Using DAG hierarchy !")
+            print("=======================")
 
             # A DAG for navigating the ontology for the given split.
             graph = dataset_spec.get_split_subgraph(self.split)  # noqa: E111
@@ -363,10 +393,12 @@ class EpisodeDescriptionSampler(object):
             num_eligible_nodes = len(self.span_leaves_rel)  # noqa: E111
             self.span_leaves_rel = np.array(self.span_leaves_rel, dtype=object)
             if num_eligible_nodes < 1:  # noqa: E111
-                raise ValueError('There are no classes eligible for participating in '
-                                 'episodes. Consider changing the value of '
-                                 '`EpisodeDescriptionSampler.min_ways` in gin, or '
-                                 'or MAX_SPANNING_LEAVES_ELIGIBLE in data.py.')
+                raise ValueError(
+                    "There are no classes eligible for participating in "
+                    "episodes. Consider changing the value of "
+                    "`EpisodeDescriptionSampler.min_ways` in gin, or "
+                    "or MAX_SPANNING_LEAVES_ELIGIBLE in data.py."
+                )
 
     def sample_class_ids(self):
         """Returns the (relative) class IDs for an episode.
@@ -378,10 +410,10 @@ class EpisodeDescriptionSampler(object):
         """
         prob = [1.0, 0.0]
         if self.ignore_hierarchy_probability:
-          prob = [  # noqa: E111
-              1.0 - self.ignore_hierarchy_probability,
-              self.ignore_hierarchy_probability
-          ]
+            prob = [  # noqa: E111
+                1.0 - self.ignore_hierarchy_probability,
+                self.ignore_hierarchy_probability,
+            ]
 
         if self.use_dag_hierarchy and np.random.choice([True, False], p=prob):
             # Retrieve the list of relative class IDs for an internal node sampled
@@ -391,9 +423,8 @@ class EpisodeDescriptionSampler(object):
             # If the number of chosen classes is larger than desired, sub-sample them.
             if len(episode_classes_rel) > self.max_ways_upper_bound:  # noqa: E111
                 episode_classes_rel = np.random.choice(
-                    episode_classes_rel,
-                    size=[self.max_ways_upper_bound],
-                    replace=False)
+                    episode_classes_rel, size=[self.max_ways_upper_bound], replace=False
+                )
 
             # Light check to make sure the chosen number of classes is valid.
             assert len(episode_classes_rel) >= self.min_ways  # noqa: E111
@@ -404,12 +435,12 @@ class EpisodeDescriptionSampler(object):
             # of the chosen supercategory.
             episode_superclass = np.random.choice(self.superclass_set, 1)[0]  # noqa: E111
             num_superclass_classes = self.dataset_spec.classes_per_superclass[  # noqa: E111
-                episode_superclass]
+                episode_superclass
+            ]
 
             num_ways = sample_num_ways_uniformly(  # noqa: E111
-                num_superclass_classes,
-                min_ways=self.min_ways,
-                max_ways=self.max_ways_upper_bound)
+                num_superclass_classes, min_ways=self.min_ways, max_ways=self.max_ways_upper_bound
+            )
 
             num_ways = self.min_ways
 
@@ -418,11 +449,15 @@ class EpisodeDescriptionSampler(object):
             # that belong to this superclass are [23, 24, 25, 26] then the returned
             # episode_classes_rel will be [26, 24] which as usual are number relative
             # to the split.
-            episode_subclass_ids = sample_class_ids_uniformly(num_ways,  # noqa: E111
-                                                              num_superclass_classes)
-            (episode_classes_rel,  # noqa: E111
-             _) = self.dataset_spec.get_class_ids_from_superclass_subclass_inds(
-                 self.split, episode_superclass, episode_subclass_ids)
+            episode_subclass_ids = sample_class_ids_uniformly(
+                num_ways, num_superclass_classes  # noqa: E111
+            )
+            (
+                episode_classes_rel,  # noqa: E111
+                _,
+            ) = self.dataset_spec.get_class_ids_from_superclass_subclass_inds(
+                self.split, episode_superclass, episode_subclass_ids
+            )
         elif self.use_all_classes:
             episode_classes_rel = np.arange(self.num_classes)  # noqa: E111
         else:  # No type of hierarchy is used. Classes are randomly sampled.
@@ -432,12 +467,15 @@ class EpisodeDescriptionSampler(object):
                 num_ways = sample_num_ways_uniformly(
                     self.num_filtered_classes,
                     min_ways=self.min_ways,
-                    max_ways=self.max_ways_upper_bound)
+                    max_ways=self.max_ways_upper_bound,
+                )
                 num_ways = self.min_ways
             # Filtered class IDs relative to the selected split
             ids_rel = [  # noqa: E111
                 class_id - self.class_set[0] for class_id in self._filtered_class_set
             ]
+            if self.contrastive:
+                return ids_rel
             episode_classes_rel = sample_class_ids_uniformly(num_ways, ids_rel)  # noqa: E111
 
         return episode_classes_rel
@@ -450,30 +488,30 @@ class EpisodeDescriptionSampler(object):
             relative `class_id` is an integer in [0, self.num_classes).
         """
         class_ids = self.sample_class_ids()
-        images_per_class = np.array([
-            self.dataset_spec.get_total_images_per_class(
-                self.class_set[cid]) for cid in class_ids
-        ])
+        images_per_class = np.array(
+            [self.dataset_spec.get_total_images_per_class(self.class_set[cid]) for cid in class_ids]
+        )
 
         if self.num_query:
             num_query = self.num_query  # noqa: E111
         else:
             num_query = compute_num_query(  # noqa: E111
-                images_per_class,
-                max_num_query=self.max_num_query,
-                num_support=self.num_support)
+                images_per_class, max_num_query=self.max_num_query, num_support=self.num_support
+            )
 
         if self.num_support:
             if isinstance(self.num_support, int):  # noqa: E111
                 if any(self.num_support + num_query > images_per_class):
-                    raise ValueError('Some classes do not have enough examples.')  # noqa: E111
+                    raise ValueError("Some classes do not have enough examples.")  # noqa: E111
                 num_support = self.num_support
             else:  # noqa: E111
                 start, end = self.num_support
                 if any(end + num_query > images_per_class):
-                    raise ValueError('The range provided for uniform sampling of the '  # noqa: E111
-                                     'number of support examples per class is not valid: '
-                                     'some classes do not have enough examples.')
+                    raise ValueError(
+                        "The range provided for uniform sampling of the "  # noqa: E111
+                        "number of support examples per class is not valid: "
+                        "some classes do not have enough examples."
+                    )
                 num_support = np.random.randint(low=start, high=end + 1)
             num_support_per_class = [num_support for _ in class_ids]  # noqa: E111
         else:
@@ -481,17 +519,24 @@ class EpisodeDescriptionSampler(object):
             support_set_size = sample_support_set_size(  # noqa: E111
                 num_remaining_per_class,
                 self.max_support_size_contrib_per_class,
-                max_support_set_size=self.max_support_set_size)
+                max_support_set_size=self.max_support_set_size,
+            )
             num_support_per_class = sample_num_support_per_class(  # noqa: E111
                 images_per_class,
                 num_remaining_per_class,
                 support_set_size,
                 min_log_weight=self.min_log_weight,
-                max_log_weight=self.max_log_weight)
-
+                max_log_weight=self.max_log_weight,
+            )
+        if self.contrastive:
+            return tuple(
+                (class_id, min(1, num_images), 0)
+                for class_id, num_images in zip(class_ids, images_per_class)
+            )
         return tuple(
             (class_id, num_support, num_query)
-            for class_id, num_support in zip(class_ids, num_support_per_class))
+            for class_id, num_support in zip(class_ids, num_support_per_class)
+        )
 
     def compute_chunk_sizes(self):
         """Computes the maximal sizes for the flush, support, and query chunks.

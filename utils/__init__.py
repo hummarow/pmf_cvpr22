@@ -62,5 +62,7 @@ def to_device(data, device):
         return {k: to_device(sample, device=device) for k, sample in data.items()}
     elif isinstance(data, collections.abc.Sequence):
         return [to_device(sample, device=device) for sample in data]
+    elif data is None:
+        return None
     else:
         raise TypeError(f"data must contain tensor, dict or list, found {type(data)}")

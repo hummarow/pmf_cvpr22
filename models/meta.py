@@ -39,7 +39,7 @@ def augmentation(img):
         [
             transforms.RandomCrop(84),
             transforms.Resize(original_size[2]),
-            transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
+            # transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.4),
         ]
     )
 
@@ -278,11 +278,11 @@ class Meta(nn.Module):
                         zip(grad, finetuned_parameters[i]),
                     )
                 )
-                average_loss += loss.item()
+            average_loss += loss.item()
         # Get average point (prototype) of finetuned parameters
         # finetuned_parameters = torch.stack(finetuned_parameters, axis=0)
         # finetuned_parameter = torch.mean(finetuned_parameter, axis=0)
-        average_loss /= task_num * update_step
+        average_loss /= task_num
         return finetuned_parameters, average_loss
 
     def query(self, x_qry, y_qry, finetuned_parameters, eval=True) -> float:
