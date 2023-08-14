@@ -51,11 +51,13 @@ def get_sets(args):
                     trainSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
                     if args.two_tier:
                         trainOuterSupportSet[source] = ContrastiveMetaH5(args, Split.TRAIN)
+                        # trainOuterSupportSet[source] = FullMetaDatasetH5(args, Split.TRAIN)
                 args.base_sources = sources
             else:
                 trainSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
                 if args.two_tier:
                     trainOuterSupportSet["combined"] = ContrastiveMetaH5(args, Split.TRAIN)
+                    # trainOuterSupportSet["combined"] = FullMetaDatasetH5(args, Split.TRAIN)
             valSet = {}
             if args.two_tier:
                 valOuterSupportSet = {}
@@ -77,6 +79,7 @@ def get_sets(args):
                     #     num_episodes=args.nValEpisode,
                     # )
                     valOuterSupportSet[source] = ContrastiveMetaH5(args, Split.VALID)
+                    # valOuterSupportSet[source] = FullMetaDatasetH5(args, Split.VALID)
             testSet = None
             if args.two_tier:
                 testOuterSupportSet = None

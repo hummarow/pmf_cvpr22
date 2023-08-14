@@ -250,6 +250,7 @@ class Trainer(object):
                 for i, (train_source, outer_support_loader) in enumerate(
                     self.outer_support_set_train.items()
                 ):
+                    print(train_source)
                     # 230801 Copy the model for each source
                     learner = copy.deepcopy(meta_learner)
                     learner.train()
@@ -268,6 +269,7 @@ class Trainer(object):
                         batch = next(iter(outer_support_loader))
                         batch = to_device(batch, self.device)
                         outer_spt_xs, outer_spt_ys, _, _ = batch  # Outer support set
+                        breakpoint()
                         finetuned_meta_parameters, outer_loss = outer_update_fn(
                             outer_spt_xs, outer_spt_ys
                         )
@@ -294,7 +296,7 @@ class Trainer(object):
                     batch = to_device(batch, self.device)
                     # inner step
                     spt_xs, spt_ys, qry_xs, qry_ys = batch
-
+                    breakpoint()
                     finetuned_parameters, inner_loss = inner_update_fn(
                         spt_xs, spt_ys, phi=finetuned_meta_parameter, inner=True
                     )

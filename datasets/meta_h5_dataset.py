@@ -35,15 +35,16 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
 
         use_dag_ontology_list = [False] * len(datasets)
         use_bilevel_ontology_list = [False] * len(datasets)
-        #         if episod_config.num_ways:
-        #             if len(datasets) > 1:
-        #                 raise ValueError('For fixed episodes, not tested yet on > 1 dataset')
-        #         else:
-        #             # Enable ontology aware sampling for Omniglot and ImageNet.
-        #             if 'omniglot' in datasets:
-        #                 use_bilevel_ontology_list[datasets.index('omniglot')] = True
-        #             if 'ilsvrc_2012' in datasets:
-        #                 use_dag_ontology_list[datasets.index('ilsvrc_2012')] = True
+
+        if episod_config.num_ways:
+            if len(datasets) > 1:
+                raise ValueError("For fixed episodes, not tested yet on > 1 dataset")
+        else:
+            # Enable ontology aware sampling for Omniglot and ImageNet.
+            if "omniglot" in datasets:
+                use_bilevel_ontology_list[datasets.index("omniglot")] = True
+            if "ilsvrc_2012" in datasets:
+                use_dag_ontology_list[datasets.index("ilsvrc_2012")] = True
 
         episod_config.use_bilevel_ontology_list = use_bilevel_ontology_list
         episod_config.use_dag_ontology_list = use_dag_ontology_list
@@ -59,7 +60,6 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
         print(f"=> There are {num_classes} classes in the {split} split of the combined datasets")
 
         self.datasets = datasets
-        # If for contrastive learning, resize only.
         self.transforms = get_transforms(data_config, split)
         self.len = episod_config.num_episodes * len(
             datasets
@@ -75,8 +75,6 @@ class FullMetaDatasetH5(torch.utils.data.Dataset):
             base_path = dataset_spec.path
             class_set = dataset_spec.get_classes(split)  # class ids in this split
             num_classes = len(class_set)
-            # If for contrastive learning, we need to sample from all classes
-
             record_file_pattern = dataset_spec.file_pattern
             assert record_file_pattern.startswith("{}"), f"Unsupported {record_file_pattern}."
 
